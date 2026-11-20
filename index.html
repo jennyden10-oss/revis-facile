@@ -69,5 +69,47 @@ async function testerConnexion() {
     <p>Tu pourras bientôt photographier tes cours
        et t'entraîner avec des quiz.</p>
   </div>
+  
+<button onclick="testerPost()">
+  Tester l'envoi POST
+</button>
+
+<p id="resultatPost"></p>
+
+<script>
+async function testerPost() {
+  const resultat = document.getElementById("resultatPost");
+
+  const adresse = prompt(
+    "Colle l'adresse Apps Script terminée par /exec"
+  );
+
+  if (!adresse) return;
+
+  resultat.textContent = "Test en cours...";
+
+  try {
+    const reponse = await fetch(
+      adresse + "?test=connexion",
+      {
+        method: "POST",
+        body: "test",
+        redirect: "follow"
+      }
+    );
+
+    const donnees = await reponse.json();
+
+    resultat.textContent =
+      "Connexion POST réussie : " + donnees.connexion;
+
+  } catch (erreur) {
+    resultat.textContent =
+      "Connexion POST impossible.";
+    console.error(erreur);
+  }
+}
+</script>
+
 </body>
 </html>
