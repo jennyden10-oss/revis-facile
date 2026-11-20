@@ -289,6 +289,41 @@ function afficherQuestionQuiz() {
   }
 }
 
+async function verifierAvecGeminiQuiz(reponseEleve) {
+  const adresse = window.adresseSessionQuiz;
+  const id = window.idSessionQuiz;
+  const code = window.codeSessionQuiz;
+
+  if (!adresse || !id || !code) {
+    throw new Error("Session de révision indisponible.");
+  }
+
+  const resultat = await fetch(adresse, {
+    method: "POST",
+    body: JSON.stringify({
+      action: "verifierReponse",
+      id: id,
+      index: positionQuiz,
+      reponse: reponseEleve,
+      codeAcces: code
+    }),
+    redirect: "follow"
+  });
+
+  if (!resultat.ok) {
+    throw new Error("Erreur de connexion.");
+  }
+
+  const donnees = await resultat.json();
+
+  if (!donnees.succes ||
+      typeof donnees.correcte !== "boolean") {
+    throw new Error("Vérification indisponible.");
+  }
+
+  return donnees.correcte;
+}
+
 function actionQuiz() {
   const quiz = window.quizEnCours;
   const q = quiz.questions[positionQuiz];
