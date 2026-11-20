@@ -1,0 +1,12 @@
+
+{
+  "name": "Révis'Facile",
+  "short_name": "Révis'Facile",
+  "description": "Mes révisions scolaires",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4169e1"
+}
