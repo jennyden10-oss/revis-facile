@@ -141,6 +141,12 @@ async function testerPost() {
     style="width:95%;padding:10px;margin:6px 0"
   >
 
+<button type="button" onclick="afficherListeQuiz()">
+  📚 Mes questionnaires
+</button>
+
+<div id="listeQuiz" aria-live="polite"></div>
+
   <input
     id="codeFamilial"
     type="password"
