@@ -100,8 +100,8 @@ async function testerPost() {
 
     const donnees = await reponse.json();
 
-    resultat.textContent =
-      "Connexion POST réussie : " + donnees.connexion;
+   resultat.textContent =
+  "Réponse reçue : " + JSON.stringify(donnees);
 
   } catch (erreur) {
     resultat.textContent =
