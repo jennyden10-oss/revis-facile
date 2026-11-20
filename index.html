@@ -172,10 +172,16 @@ async function ouvrirQuestionnaire() {
 
     const donnees = await reponse.json();
 
-    message.textContent = donnees.succes
-      ? "Questionnaire trouvé : " + donnees.quiz.titre
-      : "Accès refusé ou questionnaire introuvable.";
+   if (donnees.succes && donnees.quiz) {
+  message.textContent =
+    "Questionnaire chargé : " + donnees.quiz.titre;
 
+  // Conserver le questionnaire pour l'interface interactive.
+  window.quizEnCours = donnees.quiz;
+} else {
+  message.textContent =
+    "Accès refusé ou questionnaire introuvable.";
+}
   } catch (erreur) {
     message.textContent = "Erreur de connexion.";
     console.error(erreur);
