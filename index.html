@@ -164,17 +164,7 @@ async function testerPost() {
 <script>
 async function ouvrirQuestionnaire() {
   const message = document.getElementById("messageQuiz");
-const champAdresse = document.getElementById("adresseScript");
-
-const adresse = (
-  champAdresse.value.trim() ||
-  localStorage.getItem("revisFacileAdresse") ||
-  ""
-).split("?")[0];
-
-if (adresse) {
-  localStorage.setItem("revisFacileAdresse", adresse);
-}
+const adresse = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquFVRKy9MLtQLQn8uy1y8dRPLIUdqT0wWaV0ul_H-i8Kaiwcw/exec";
   const id = document.getElementById("identifiantQuiz")
     .value.trim();
   const code = document.getElementById("codeFamilial").value;
