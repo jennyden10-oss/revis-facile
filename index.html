@@ -111,5 +111,79 @@ async function testerPost() {
 }
 </script>
 
+<div class="carte">
+  <h2>📚 Ouvrir un questionnaire</h2>
+
+  <input
+    id="adresseScript"
+    type="url"
+    placeholder="Adresse Apps Script"
+    style="width:95%;padding:10px;margin:6px 0"
+  >
+
+  <input
+    id="identifiantQuiz"
+    type="text"
+    placeholder="Identifiant du questionnaire"
+    style="width:95%;padding:10px;margin:6px 0"
+  >
+
+  <input
+    id="codeFamilial"
+    type="password"
+    placeholder="Code d'accès familial"
+    autocomplete="off"
+    style="width:95%;padding:10px;margin:6px 0"
+  >
+
+  <button onclick="ouvrirQuestionnaire()">
+    Ouvrir le questionnaire
+  </button>
+
+  <p id="messageQuiz"></p>
+</div>
+
+<script>
+async function ouvrirQuestionnaire() {
+  const message = document.getElementById("messageQuiz");
+  const adresse = document.getElementById("adresseScript")
+    .value.trim().split("?")[0];
+  const id = document.getElementById("identifiantQuiz")
+    .value.trim();
+  const code = document.getElementById("codeFamilial").value;
+
+  if (!adresse || !id || !code) {
+    message.textContent = "Complète les trois champs.";
+    return;
+  }
+
+  message.textContent = "Chargement en cours...";
+
+  try {
+    const reponse = await fetch(adresse, {
+      method: "POST",
+      body: JSON.stringify({
+        action: "chargerQuiz",
+        id: id,
+        codeAcces: code
+      }),
+      redirect: "follow"
+    });
+
+    const donnees = await reponse.json();
+
+    message.textContent = donnees.succes
+      ? "Questionnaire trouvé : " + donnees.quiz.titre
+      : "Accès refusé ou questionnaire introuvable.";
+
+  } catch (erreur) {
+    message.textContent = "Erreur de connexion.";
+    console.error(erreur);
+  } finally {
+    document.getElementById("codeFamilial").value = "";
+  }
+}
+</script>
+
 </body>
 </html>
