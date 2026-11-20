@@ -169,10 +169,15 @@ const adresse = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquF
     .value.trim();
   const code = document.getElementById("codeFamilial").value;
 
-  if (!adresse || !id || !code) {
-    message.textContent = "Complète les trois champs.";
-    return;
-  }
+ 
+if (!adresse || !id || !code) {
+  message.textContent =
+    (!adresse ? "Adresse Apps Script manquante. " : "") +
+    (!id ? "Identifiant du questionnaire manquant. " : "") +
+    (!code ? "Code familial manquant." : "");
+  return;
+}
+
 
   message.textContent = "Chargement en cours...";
 
