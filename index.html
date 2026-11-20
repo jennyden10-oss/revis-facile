@@ -457,5 +457,13 @@ champ.disabled = true;
   }
 </script>
 
+<script>
+  const adresseMemorisee = localStorage.getItem("revisFacileAdresse");
+
+  if (adresseMemorisee) {
+    document.getElementById("adresseScript").value = adresseMemorisee;
+  }
+</script>
+
 </body>
 </html>
