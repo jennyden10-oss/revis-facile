@@ -324,7 +324,7 @@ async function verifierAvecGeminiQuiz(reponseEleve) {
   return donnees.correcte;
 }
 
-function actionQuiz() {
+async function actionQuiz() {
   const quiz = window.quizEnCours;
   const q = quiz.questions[positionQuiz];
 
@@ -356,11 +356,39 @@ function actionQuiz() {
     const champ = document.getElementById("reponseEcriteQuiz");
     if (!champ.value.trim()) return;
 
-    juste = q.reponsesAcceptees.some(
-      r => texteNormalise(r) === texteNormalise(champ.value)
-    );
-    attendu = q.reponsesAcceptees[0];
-    champ.disabled = true;
+    
+juste = q.reponsesAcceptees.some(
+  r => texteNormalise(r) === texteNormalise(champ.value)
+);
+
+attendu = q.reponsesAcceptees[0];
+
+if (!juste) {
+  const bouton = document.getElementById("boutonQuiz");
+  const ancienTexte = bouton.textContent;
+
+  bouton.disabled = true;
+  bouton.textContent = "Vérification en cours…";
+
+  try {
+    juste = await verifierAvecGeminiQuiz(champ.value);
+  } catch (erreur) {
+    console.error("Correction indisponible :", erreur);
+
+    const correction = document.getElementById("correctionQuiz");
+    correction.textContent =
+      "Impossible de vérifier cette formulation pour le moment. " +
+      "Ta réponse n'est pas comptée comme fausse. Réessaie.";
+
+    return;
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = ancienTexte;
+  }
+}
+
+champ.disabled = true;
+
   }
 
   reponseValidee = true;
