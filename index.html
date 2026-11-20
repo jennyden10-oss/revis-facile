@@ -163,6 +163,67 @@ async function testerPost() {
 </div>
 
 <script>
+  
+async function afficherListeQuiz() {
+  const zone = document.getElementById("listeQuiz");
+  const adresse = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquFVRKy9MLtQLQn8uy1y8dRPLIUdqT0wWaV0ul_H-i8Kaiwcw/exec";
+  const code = document.getElementById("codeFamilial").value;
+
+  if (!code) {
+    zone.textContent = "Saisis d'abord le code familial.";
+    return;
+  }
+
+  zone.textContent = "Recherche des questionnaires...";
+
+  try {
+    const reponse = await fetch(adresse, {
+      method: "POST",
+      body: JSON.stringify({
+        action: "listerQuiz",
+        codeAcces: code
+      }),
+      redirect: "follow"
+    });
+
+    const donnees = await reponse.json();
+
+    if (!donnees.succes || !Array.isArray(donnees.questionnaires)) {
+      zone.textContent = "Impossible de récupérer les questionnaires.";
+      return;
+    }
+
+    zone.replaceChildren();
+
+    if (donnees.questionnaires.length === 0) {
+      zone.textContent = "Aucun questionnaire disponible.";
+      return;
+    }
+
+    donnees.questionnaires.forEach(quiz => {
+      const bouton = document.createElement("button");
+
+      bouton.type = "button";
+      bouton.textContent = "📖 " + quiz.titre;
+      bouton.style.display = "block";
+      bouton.style.margin = "10px 0";
+      bouton.style.padding = "12px";
+      bouton.style.width = "100%";
+
+      bouton.onclick = () => {
+        document.getElementById("identifiantQuiz").value = quiz.id;
+        ouvrirQuestionnaire();
+      };
+
+      zone.appendChild(bouton);
+    });
+
+  } catch (erreur) {
+    console.error(erreur);
+    zone.textContent = "Erreur de connexion.";
+  }
+}
+
 async function ouvrirQuestionnaire() {
   const message = document.getElementById("messageQuiz");
 const adresse = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquFVRKy9MLtQLQn8uy1y8dRPLIUdqT0wWaV0ul_H-i8Kaiwcw/exec";
