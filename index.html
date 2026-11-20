@@ -24,6 +24,43 @@
     }
   </style>
 </head>
+  
+<button onclick="testerConnexion()">
+  Tester la connexion
+</button>
+
+<p id="resultat"></p>
+
+<script>
+async function testerConnexion() {
+  const resultat = document.getElementById("resultat");
+  resultat.textContent = "Test en cours...";
+
+  const adresse = prompt(
+    "Colle l'adresse Apps Script terminée par ?test=connexion"
+  );
+
+  if (!adresse) {
+    resultat.textContent = "Test annulé.";
+    return;
+  }
+
+  try {
+    const reponse = await fetch(adresse, {
+      method: "GET",
+      redirect: "follow"
+    });
+
+    const donnees = await reponse.json();
+    resultat.textContent =
+      "Connexion réussie : " + donnees.connexion;
+  } catch (erreur) {
+    resultat.textContent =
+      "Connexion impossible depuis cette page.";
+    console.error(erreur);
+  }
+}
+</script>
 <body>
   <div class="carte">
     <h1>Révis'Facile 📚</h1>
