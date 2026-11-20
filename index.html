@@ -434,5 +434,19 @@ champ.disabled = true;
 }
 </script>
 
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("./sw.js")
+        .then(function () {
+          console.log("Service worker activé");
+        })
+        .catch(function (erreur) {
+          console.error("Erreur service worker :", erreur);
+        });
+    });
+  }
+</script>
+
 </body>
 </html>
