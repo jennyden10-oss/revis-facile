@@ -213,11 +213,18 @@ let scoreQuiz = 0;
 let choixQuiz = [];
 let reponseValidee = false;
 
+
 function texteNormalise(texte) {
-  return String(texte).normalize("NFC")
-    .trim().replace(/\s+/g, " ")
-    .toLocaleLowerCase("fr");
+  return String(texte)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("fr")
+    .replace(/[’']/g, " ")
+    .replace(/[.,;:!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
+
 
 function afficherQuestionQuiz() {
   const quiz = window.quizEnCours;
