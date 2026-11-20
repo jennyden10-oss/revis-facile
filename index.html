@@ -178,6 +178,9 @@ async function ouvrirQuestionnaire() {
 
   // Conserver le questionnaire pour l'interface interactive.
   window.quizEnCours = donnees.quiz;
+    positionQuiz = 0;
+scoreQuiz = 0;
+afficherQuestionQuiz();
 } else {
   message.textContent =
     "Accès refusé ou questionnaire introuvable.";
@@ -188,6 +191,155 @@ async function ouvrirQuestionnaire() {
   } finally {
     document.getElementById("codeFamilial").value = "";
   }
+}
+</script>
+
+<div class="carte" id="zoneQuiz" hidden>
+  <h2 id="titreQuiz"></h2>
+  <p id="progressionQuiz"></p>
+  <h3 id="questionQuiz"></h3>
+
+  <div id="reponsesQuiz"></div>
+  <div id="correctionQuiz" aria-live="polite"></div>
+
+  <button id="boutonQuiz" onclick="actionQuiz()">
+    Vérifier
+  </button>
+</div>
+
+<script>
+let positionQuiz = 0;
+let scoreQuiz = 0;
+let choixQuiz = [];
+let reponseValidee = false;
+
+function texteNormalise(texte) {
+  return String(texte).normalize("NFC")
+    .trim().replace(/\s+/g, " ")
+    .toLocaleLowerCase("fr");
+}
+
+function afficherQuestionQuiz() {
+  const quiz = window.quizEnCours;
+  if (!quiz || !quiz.questions) return;
+
+  const q = quiz.questions[positionQuiz];
+  choixQuiz = [];
+  reponseValidee = false;
+
+  document.getElementById("zoneQuiz").hidden = false;
+  document.getElementById("titreQuiz").textContent = quiz.titre;
+  document.getElementById("progressionQuiz").textContent =
+    "Question " + (positionQuiz + 1) +
+    " sur " + quiz.questions.length;
+  document.getElementById("questionQuiz").textContent = q.question;
+
+  const zone = document.getElementById("reponsesQuiz");
+  zone.replaceChildren();
+  document.getElementById("correctionQuiz").replaceChildren();
+
+  document.getElementById("boutonQuiz").textContent = "Vérifier";
+
+  if (["qcm", "multiple", "vrai_faux"].includes(q.type)) {
+    q.choix.forEach((choix, i) => {
+      const bouton = document.createElement("button");
+      bouton.textContent = choix;
+      bouton.style.display = "block";
+      bouton.style.margin = "10px 0";
+      bouton.style.padding = "12px";
+      bouton.style.width = "100%";
+
+      bouton.onclick = () => {
+        if (reponseValidee) return;
+
+        if (q.type === "multiple") {
+          choixQuiz = choixQuiz.includes(i)
+            ? choixQuiz.filter(n => n !== i)
+            : [...choixQuiz, i];
+        } else {
+          choixQuiz = [i];
+        }
+
+        zone.querySelectorAll("button").forEach((b, j) => {
+          b.style.background = choixQuiz.includes(j)
+            ? "#dce6ff" : "white";
+        });
+      };
+
+      zone.appendChild(bouton);
+    });
+  } else {
+    const champ = document.createElement("input");
+    champ.type = "text";
+    champ.id = "reponseEcriteQuiz";
+    champ.placeholder = "Ta réponse…";
+    champ.style.width = "100%";
+    champ.style.padding = "12px";
+    zone.appendChild(champ);
+  }
+}
+
+function actionQuiz() {
+  const quiz = window.quizEnCours;
+  const q = quiz.questions[positionQuiz];
+
+  if (reponseValidee) {
+    positionQuiz++;
+
+    if (positionQuiz >= quiz.questions.length) {
+      document.getElementById("zoneQuiz").innerHTML =
+        "<h2>🎉 Entraînement terminé !</h2>" +
+        "<h2>" + scoreQuiz + " / " +
+        quiz.questions.length + "</h2>";
+    } else {
+      afficherQuestionQuiz();
+    }
+    return;
+  }
+
+  let juste = false;
+  let attendu = "";
+
+  if (["qcm", "multiple", "vrai_faux"].includes(q.type)) {
+    if (!choixQuiz.length) return;
+
+    juste = choixQuiz.length === q.correctes.length &&
+      q.correctes.every(n => choixQuiz.includes(n));
+
+    attendu = q.correctes.map(n => q.choix[n]).join(", ");
+  } else {
+    const champ = document.getElementById("reponseEcriteQuiz");
+    if (!champ.value.trim()) return;
+
+    juste = q.reponsesAcceptees.some(
+      r => texteNormalise(r) === texteNormalise(champ.value)
+    );
+    attendu = q.reponsesAcceptees[0];
+    champ.disabled = true;
+  }
+
+  reponseValidee = true;
+  if (juste) scoreQuiz++;
+
+  const correction = document.getElementById("correctionQuiz");
+  const titre = document.createElement("p");
+  titre.textContent = juste
+    ? "✓ Bonne réponse !" : "✗ Pas tout à fait.";
+  correction.appendChild(titre);
+
+  if (!juste) {
+    const p = document.createElement("p");
+    p.textContent = "Bonne réponse : " + attendu;
+    correction.appendChild(p);
+  }
+
+  const explication = document.createElement("p");
+  explication.textContent = q.explication;
+  correction.appendChild(explication);
+
+  document.getElementById("boutonQuiz").textContent =
+    positionQuiz + 1 === quiz.questions.length
+      ? "Voir mon résultat" : "Continuer";
 }
 </script>
 
