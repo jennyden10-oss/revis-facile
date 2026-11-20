@@ -164,8 +164,17 @@ async function testerPost() {
 <script>
 async function ouvrirQuestionnaire() {
   const message = document.getElementById("messageQuiz");
-  const adresse = document.getElementById("adresseScript")
-    .value.trim().split("?")[0];
+const champAdresse = document.getElementById("adresseScript");
+
+const adresse = (
+  champAdresse.value.trim() ||
+  localStorage.getItem("revisFacileAdresse") ||
+  ""
+).split("?")[0];
+
+if (adresse) {
+  localStorage.setItem("revisFacileAdresse", adresse);
+}
   const id = document.getElementById("identifiantQuiz")
     .value.trim();
   const code = document.getElementById("codeFamilial").value;
