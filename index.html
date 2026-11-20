@@ -177,7 +177,10 @@ async function ouvrirQuestionnaire() {
     "Questionnaire chargé : " + donnees.quiz.titre;
 
   // Conserver le questionnaire pour l'interface interactive.
-  window.quizEnCours = donnees.quiz;
+window.quizEnCours = donnees.quiz;
+window.codeSessionQuiz = code;
+window.adresseSessionQuiz = adresse;
+window.idSessionQuiz = id;
 positionQuiz = 0;
 scoreQuiz = 0;
 afficherQuestionQuiz();
