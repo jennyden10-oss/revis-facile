@@ -20,7 +20,7 @@ function environnement() {
     ["SESSION_SECRET", crypto.randomBytes(32).toString("hex")],
     ["GEMINI_API_KEY", "clé simulée"]
   ]);
-  const pannes = { gemini: false, deplacement: false, publication: false, apresCreationPhoto: false };
+  const pannes = { gemini: false, deplacement: false, publication: false, contenu: false, apresCreationPhoto: false };
   function dossier(id, nom = id, parent = null) {
     const contenu = {
       id, nom, parent, fichiers: [],
@@ -38,12 +38,16 @@ function environnement() {
         contenu.parent = destination;
       },
       createFile: (source, texte, mime) => {
-        const blob = typeof source === "string" ? creerBlob(Buffer.from(texte), mime, source) : source;
+        let blob = typeof source === "string" ? creerBlob(Buffer.from(texte), mime, source) : source;
         let nomFichier = typeof source === "string" ? source : source.nom;
         const fichier = {
           getName: () => nomFichier,
           getBlob: () => blob,
           isTrashed: () => false,
+          setContent: texte => {
+            if (pannes.contenu) throw new Error("Écriture interrompue");
+            blob = creerBlob(Buffer.from(texte), mime, nomFichier);
+          },
           setName: nouveau => {
             if (pannes.publication) throw new Error("Publication interrompue");
             nomFichier = nouveau;
@@ -147,13 +151,17 @@ const chargerPhoto = (id, indexPhoto, contenuBase64, session = jeton) => appeler
 });
 const generer = (id = lotId, session = jeton) => appeler("genererQuiz", { jeton: session, lotId: id });
 const preparer = (id = lotId, nombre = 2, session = jeton) => appeler("preparerLot", { jeton: session, lotId: id, nombre });
+const valider = (titre, id = lotId, session = jeton) => appeler("validerTitre", {
+  jeton: session, lotId: id, titre
+});
+const renommer = (id, titreActuel, titre) => appeler("renommerQuiz", { jeton, id, titreActuel, titre });
 const lister = () => appeler("listerQuiz", { jeton }).questionnaires;
 const ancienId = crypto.randomUUID();
 quiz.createFile("Quiz_" + ancienId + ".json", JSON.stringify({
   id: ancienId, titre: "Ancien questionnaire", questions: [{}]
 }), "application/json");
 
-for (const action of ["preparerLot", "ajouterPhoto", "genererQuiz"]) {
+for (const action of ["preparerLot", "ajouterPhoto", "genererQuiz", "validerTitre", "renommerQuiz"]) {
   assert.equal(appeler(action, { lotId }).erreur, "SESSION_INVALIDE");
 }
 assert.equal(preparer(lotId, 9).erreur, "NOMBRE_PHOTOS");
@@ -182,27 +190,47 @@ simulerPendantGemini(() => {
   assert.equal(generer().erreur, "GENERATION_EN_COURS");
   assert.equal(lister().length, 1);
 });
-pannes.deplacement = true;
-assert.equal(generer().erreur, "ARCHIVAGE_INTERROMPU");
-assert.equal(lister().length, 1, "Le quiz temporaire reste invisible");
+const proposition = generer();
+assert.deepEqual(proposition.quiz, { id: lotId, titre: "Fractions", aValider: true });
+assert.deepEqual(generer().quiz, proposition.quiz);
+assert.equal(lister().length, 1, "Un brouillon n’apparaît pas dans la liste");
+assert.equal(appeler("chargerQuiz", { jeton, id: lotId }).succes, false);
 assert.deepEqual(requetes.at(-1).contents[0].parts.slice(1).map(part => part.inline_data.data), premierCours);
+assert.equal(valider("Autre cours", lotId, autreJeton).erreur, "LOT_INVALIDE");
+assert.equal(valider("  ").erreur, "TITRE_INVALIDE");
+pannes.deplacement = true;
+assert.equal(valider("Fractions — révision").erreur, "ARCHIVAGE_INTERROMPU");
 pannes.deplacement = false;
 pannes.publication = true;
-assert.equal(generer().erreur, "ARCHIVAGE_INTERROMPU");
+assert.equal(valider("Fractions — révision").erreur, "ARCHIVAGE_INTERROMPU");
+assert.equal(lister().length, 1);
 pannes.publication = false;
-const resultat = generer();
-assert.deepEqual(resultat.quiz, { id: lotId, titre: "Fractions" });
+const resultat = valider("Fractions — révision");
+assert.deepEqual(resultat.quiz, { id: lotId, titre: "Fractions — révision", aValider: false });
+assert.deepEqual(valider("Autre titre lors d’un retour perdu").quiz, resultat.quiz);
 assert.deepEqual(generer().quiz, resultat.quiz);
 assert.equal(requetes.length, 2, "Les reprises d’archivage ne rappellent pas Gemini");
-assert.equal(quiz.fichiers.filter(f => f.getName() === "Quiz_" + lotId + ".json").length, 1);
+const fichier = quiz.fichiers.find(f => f.getName() === "Quiz_" + lotId + ".json");
+assert.equal(quiz.fichiers.length, 2);
 const dossiersArchives = [...dossiers.values()].filter(d => d.parent === archives);
 assert.equal(dossiersArchives.length, 1);
-assert.equal(dossiersArchives[0].nom, "Fractions");
-assert.equal(dossiersArchives[0].fichiers.length, 2);
+const [archive] = dossiersArchives;
+assert.equal(archive.nom, "Fractions — révision");
+assert.equal(archive.fichiers.length, 2);
 assert.equal([...dossiers.values()].filter(d => d.parent === entree).length, 1);
 assert.equal(lister().length, 2);
-assert.equal(appeler("chargerQuiz", { jeton, id: lotId }).quiz.questions[0].correctes[0], 0);
-assert.equal(appeler("chargerQuiz", { jeton, id: ancienId }).quiz.titre, "Ancien questionnaire");
+const original = appeler("chargerQuiz", { jeton, id: lotId }).quiz;
+pannes.contenu = true;
+assert.equal(renommer(lotId, original.titre, "Fractions faciles").erreur, "RENOMMAGE_INTERROMPU");
+assert.equal(archive.nom, original.titre);
+pannes.contenu = false;
+assert(renommer(lotId, original.titre, "Fractions faciles").quiz.archiveRenommee);
+assert(renommer(lotId, original.titre, "Fractions faciles").succes, "Une réponse perdue est rejouable");
+assert.equal(renommer(lotId, original.titre, "Titre périmé").erreur, "TITRE_MODIFIE");
+assert.equal(archive.nom, "Fractions faciles");
+assert.equal(quiz.fichiers.find(f => f.getName() === "Quiz_" + lotId + ".json"), fichier);
+assert.deepEqual(appeler("chargerQuiz", { jeton, id: lotId }).quiz, { ...original, titre: "Fractions faciles" });
+assert.equal(renommer(ancienId, "Ancien questionnaire", "Ancien — nouveau titre").quiz.archiveRenommee, false);
 
 const cleAutre = "LOT_" + autreLot;
 const lotInterrompu = JSON.parse(props.get(cleAutre));
@@ -211,6 +239,15 @@ assert.equal(generer(autreLot, autreJeton).erreur, "GENERATION_EN_COURS");
 props.set(cleAutre, JSON.stringify({ ...lotInterrompu, enCoursJusqua: Date.now() - 1 }));
 simulerPendantGemini(() => {});
 assert(generer(autreLot, autreJeton).succes);
+assert(valider("Fractions", autreLot, autreJeton).succes);
+const archiveAncienne = dossiers.get(lotInterrompu.dossierId);
+const fichierAncien = quiz.fichiers.find(f => f.getName() === "Quiz_" + autreLot + ".json");
+const ancienFormat = JSON.parse(fichierAncien.getBlob().getDataAsString());
+delete ancienFormat.dossierArchiveId;
+fichierAncien.setContent(JSON.stringify(ancienFormat));
+assert(renommer(autreLot, "Fractions", "Autre cours archivé").quiz.archiveRenommee);
+assert.equal(archiveAncienne.nom, "Autre cours archivé");
+assert.equal(archive.nom, "Fractions faciles");
 assert.deepEqual(requetes.at(-1).contents[0].parts.slice(1).map(part => part.inline_data.data), [autreCours]);
 console.log("OK — sessions, limites, isolation, reprises, archivage et anciens questionnaires");
 
@@ -222,6 +259,7 @@ async function testerInterface(kit = false) {
   ));
   let coupeEnvoi = true;
   let coupeGeneration = true;
+  let coupeValidation = true;
   let dernierLot;
   let appelSuspendu;
   const envoyees = [];
@@ -238,7 +276,11 @@ async function testerInterface(kit = false) {
       disabled = false;
       style = {};
       listeners = {};
-      set value(value) { if (!value) this.files = []; }
+      v = "";
+      set value(value) { this.v = value; if (!value) this.files = []; }
+      get value() { return this.v; }
+      setAttribute() {}
+      focus() {}
       set textContent(texte) { this.h = texte; this.children = []; }
       get textContent() { return this.h; }
       appendChild(element) { this.children.push(element); }
@@ -259,7 +301,8 @@ async function testerInterface(kit = false) {
       if (data.action === "ajouterPhoto") envoyees.push(data.indexPhoto);
       const resultat = appeler(data.action, data);
       if (data.action === "ajouterPhoto" && coupeEnvoi ||
-          data.action === "genererQuiz" && coupeGeneration) {
+          data.action === "genererQuiz" && coupeGeneration ||
+          data.action === "validerTitre" && coupeValidation) {
         return new Promise(resolve => {
           appelSuspendu = { action: data.action, signal, terminer: () => resolve(resultat) };
         });
@@ -376,11 +419,39 @@ async function testerInterface(kit = false) {
   assert.equal(requetes.length, requetesApresCreation);
   attente.terminer();
   await new Promise(setImmediate);
-  assert.match(page.lire("progressionLot").textContent, /Questionnaire créé : Fractions/);
-  assert.equal(page.lire("listeQuiz").children.at(-1).type, "button");
-  assert.equal(historiques.at(-1).action, "listerQuiz");
+  assert.equal(page.lire("formTitreLot").hidden, false);
+  assert.equal(page.lire("titreLot").value, "Fractions");
+  assert(!lister().some(quiz => quiz.id === lotOriginal));
+
+  page.lire("titreLot").value = "Révision des fractions";
+  page.lire("titreLot").listeners.input();
+  const soumettre = id => page.lire(id).listeners.submit({ preventDefault() {} });
+  const clicValidation = soumettre("formTitreLot");
+  const validation = await attendreAppel("validerTitre");
+  page.navigator.onLine = false;
+  page.evenements.dispatchEvent(new Event("offline"));
+  await clicValidation;
+  assert.match(page.lire("progressionLot").textContent, /Connexion Internet interrompue/);
+  assert.equal(page.lire("titreLot").value, "Révision des fractions");
+
+  coupeValidation = false;
+  page = navigateur();
+  assert.equal(page.lire("titreLot").value, "Révision des fractions");
+  await soumettre("formTitreLot");
+  validation.terminer();
+  assert.match(page.lire("progressionLot").textContent, /Questionnaire créé : Révision des fractions/);
+  assert.equal(lister().filter(quiz => quiz.id === lotOriginal).length, 1);
+  assert.equal(requetes.length, requetesApresCreation);
+  const ligne = page.lire("listeQuiz").children.find(element =>
+    element.children[0].textContent === "📖 Révision des fractions");
+  ligne.children[1].onclick();
+  assert.equal(page.lire("nouveauTitre").value, "Révision des fractions");
+  page.lire("nouveauTitre").value = "Fractions, révision finale";
+  await soumettre("formRenommer");
+  assert.match(page.lire("messageRenommage").textContent, /dossier d’archives renommés/);
+  assert(lister().some(quiz => quiz.id === lotOriginal && quiz.titre === "Fractions, révision finale"));
   assert.equal(stockage.size, 1, "Seule la session reste après un succès");
-  console.log("OK — coupure, délai et même lot après reprise (" + (kit ? "kit Apps Script" : "fetch") + ")");
+  console.log("OK — coupure, validation et renommage (" + (kit ? "kit Apps Script" : "fetch") + ")");
 
 }
 

@@ -27,7 +27,8 @@
       text-decoration: underline;
       cursor: pointer;
     }
-    #codeFamilial {
+    .formulaire-titre { margin-top: 16px; }
+    .formulaire-titre input, #codeFamilial {
       box-sizing: border-box;
       display: block;
       width: 100%;
@@ -70,6 +71,13 @@
   </button>
 
   <div id="listeQuiz" aria-live="polite"></div>
+  <form id="formRenommer" class="formulaire-titre" hidden>
+    <label for="nouveauTitre">Nouveau titre</label>
+    <input id="nouveauTitre" type="text" maxlength="80" required>
+    <button id="enregistrerRenommage" type="submit">Enregistrer</button>
+    <button id="annulerRenommage" type="button">Annuler</button>
+  </form>
+  <p id="messageRenommage" role="status"></p>
   <p id="messageQuiz"></p>
 </div>
 
@@ -89,6 +97,11 @@
   <p>Jusqu’à 8 photos JPEG, PNG ou WebP, dans l’ordre des pages.</p>
   <p id="nombrePhotos">Aucune photo sélectionnée.</p>
   <button type="button" id="genererQuestionnaire" disabled>Générer le questionnaire</button>
+  <form id="formTitreLot" class="formulaire-titre" hidden>
+    <label for="titreLot">Titre du questionnaire</label>
+    <input id="titreLot" type="text" maxlength="80" required>
+    <button id="validerTitreLot" type="submit">Enregistrer le questionnaire</button>
+  </form>
   <button type="button" id="nouveauLot" hidden>Commencer un autre cours</button>
   <p id="progressionLot" role="status"></p>
 </div>
@@ -138,6 +151,7 @@ function terminerSession(message = "", effacerStockage = true) {
   document.getElementById("messageQuiz").textContent = "";
   document.getElementById("messageSession").textContent = "";
   reinitialiserPhotos();
+  fermerRenommage();
   window.quizEnCours = null;
   window.idSessionQuiz = null;
   document.getElementById("connexion").hidden = false;
@@ -209,7 +223,16 @@ async function afficherListeQuiz() {
 
       bouton.onclick = () => ouvrirQuestionnaire(quiz.id);
 
-      zone.appendChild(bouton);
+      const renommer = document.createElement("button");
+      renommer.type = "button";
+      renommer.textContent = "Renommer";
+      renommer.setAttribute("aria-label", "Renommer « " + quiz.titre + " »");
+      renommer.onclick = () => proposerRenommage(quiz);
+
+      const ligne = document.createElement("div");
+      ligne.appendChild(bouton);
+      ligne.appendChild(renommer);
+      zone.appendChild(ligne);
     });
 
   } catch (erreur) {
@@ -485,6 +508,9 @@ const nombrePhotos = document.getElementById("nombrePhotos");
 const progressionLot = document.getElementById("progressionLot");
 let lotEnCours = null;
 let traitementLot = false;
+const formTitreLot = document.getElementById("formTitreLot");
+const champTitreLot = document.getElementById("titreLot");
+const boutonValiderTitre = document.getElementById("validerTitreLot");
 
 function cleLotNavigateur() {
   return CLE_SESSION + ":lot";
@@ -504,8 +530,13 @@ function enregistrerLotLocal(lot, idTermine) {
 
 function actualiserCommandesLot() {
   const nombre = champPhotos.files.length;
-  boutonFichiers.disabled = traitementLot;
+  const titreAValider = typeof lotEnCours?.titre === "string";
+  boutonFichiers.disabled = traitementLot || titreAValider;
+  boutonGeneration.hidden = titreAValider;
   boutonGeneration.disabled = traitementLot || (!nombre && !lotEnCours);
+  formTitreLot.hidden = !titreAValider;
+  champTitreLot.disabled = traitementLot;
+  boutonValiderTitre.disabled = traitementLot;
   boutonGeneration.textContent = lotEnCours && !traitementLot
     ? "Réessayer" : "Générer le questionnaire";
   boutonNouveauLot.hidden = !lotEnCours;
@@ -529,8 +560,12 @@ function restaurerLot() {
         typeof memorise.id === "string" && Array.isArray(memorise.empreintes) &&
         memorise.empreintes.length >= 1 && memorise.empreintes.length <= MAX_PHOTOS_LOT) {
       lotEnCours = memorise;
-      progressionLot.textContent =
-        "Un cours est en attente. Appuie sur Réessayer pour le reprendre.";
+      if (typeof memorise.titre === "string") {
+        champTitreLot.value = memorise.titre;
+        progressionLot.textContent = "Vérifie le titre, puis enregistre le questionnaire.";
+      } else {
+        progressionLot.textContent = "Un cours est en attente. Appuie sur Réessayer pour le reprendre.";
+      }
     }
   } catch {
     // Le stockage n'est pas toujours disponible.
@@ -585,12 +620,20 @@ const MESSAGES_LOT = {
   GEMINI_NON_CONFIGURE: "La génération n’est pas encore configurée.",
   GEMINI_INDISPONIBLE: "Gemini n’a pas pu créer le questionnaire. Réessaie dans un instant.",
   DRIVE_NON_CONFIGURE: "Les dossiers de l’application ne sont pas configurés.",
-  ARCHIVAGE_INTERROMPU: "Le questionnaire est prêt. Réessaie pour terminer l’archivage des photos."
+  ARCHIVAGE_INTERROMPU: "L’archivage a été interrompu. Appuie à nouveau sur Enregistrer le questionnaire.",
+  TITRE_INVALIDE: "Saisis un titre de 1 à 80 caractères.",
+  BROUILLON_INTROUVABLE: "Le questionnaire à enregistrer est introuvable.",
+  QUESTIONNAIRE_INTROUVABLE: "Ce questionnaire est introuvable. Actualise Mes questionnaires.",
+  ARCHIVE_INTROUVABLE: "Le dossier d’archives lié à ce questionnaire est introuvable.",
+  TITRE_MODIFIE: "Le titre a changé. Actualise Mes questionnaires avant de le renommer.",
+  RENOMMAGE_INTERROMPU: "Le renommage a été interrompu. Réessaie."
 };
 
 async function appelerAvecDelai(action, parametres) {
-  const messageHorsLigne =
-    "Connexion Internet interrompue. Rétablis ta connexion, puis appuie sur Réessayer.";
+  const commande = action === "validerTitre" ? "Enregistrer le questionnaire"
+    : action === "renommerQuiz" ? "Enregistrer" : "Réessayer";
+  const consigne = " Vérifie ta connexion, puis appuie sur " + commande + ".";
+  const messageHorsLigne = "Connexion Internet interrompue." + consigne;
   if (navigator.onLine === false) throw new Error(messageHorsLigne);
 
   const controleur = new AbortController();
@@ -603,14 +646,14 @@ async function appelerAvecDelai(action, parametres) {
     minuterie = setTimeout(() => {
       rejeter(new Error(generation
         ? "La réponse tarde. Le questionnaire est peut-être encore en cours. Appuie sur Réessayer pour vérifier."
-        : "Le serveur met trop de temps à répondre. Vérifie ta connexion, puis appuie sur Réessayer."));
+        : "Le serveur met trop de temps à répondre." + consigne));
     }, generation ? 120000 : 30000);
   });
 
   try {
     const requete = appelerActionProtegee(action, parametres, controleur.signal)
       .catch(() => {
-        throw new Error("Impossible de joindre le serveur. Vérifie ta connexion, puis appuie sur Réessayer.");
+        throw new Error("Impossible de joindre le serveur." + consigne);
       });
     // Le canal du kit ne peut pas annuler un appel Apps Script déjà transmis.
     return await Promise.race([interruption, requete]);
@@ -630,7 +673,7 @@ async function appelerLot(action, parametres) {
 }
 
 async function genererDepuisPhotos() {
-  if (traitementLot || !session) return;
+  if (traitementLot || !session || typeof lotEnCours?.titre === "string") return;
   const sessionEnvoi = session;
   const fichiers = Array.from(champPhotos.files);
   if (!fichiers.length && !lotEnCours) return;
@@ -675,13 +718,17 @@ async function genererDepuisPhotos() {
       if (!await appelerLot("ajouterPhoto", { lotId, indexPhoto, contenuBase64 })) return;
     }
 
-    progressionLot.textContent = "Création du questionnaire et archivage des photos…";
+    progressionLot.textContent = "Création du questionnaire…";
     const resultat = await appelerLot("genererQuiz", { lotId });
     if (!resultat) return;
-    enregistrerLotLocal(null, lotId);
-    reinitialiserPhotos();
-    progressionLot.textContent = "Questionnaire créé : " + resultat.quiz.titre;
-    await afficherListeQuiz();
+    if (resultat.quiz.aValider) {
+      lotEnCours.titre = resultat.quiz.titre;
+      champTitreLot.value = resultat.quiz.titre;
+      enregistrerLotLocal(lotEnCours);
+      progressionLot.textContent = "Vérifie le titre, puis enregistre le questionnaire.";
+    } else {
+      await terminerEnregistrementLot(lotId, resultat.quiz.titre);
+    }
   } catch (erreur) {
     if (session === sessionEnvoi) {
       progressionLot.textContent = erreur.message;
@@ -691,6 +738,102 @@ async function genererDepuisPhotos() {
     actualiserCommandesLot();
   }
 }
+
+async function terminerEnregistrementLot(lotId, titre) {
+  enregistrerLotLocal(null, lotId);
+  reinitialiserPhotos();
+  progressionLot.textContent = "Questionnaire créé : " + titre;
+  await afficherListeQuiz();
+}
+
+champTitreLot.addEventListener("input", () => {
+  if (!lotEnCours) return;
+  lotEnCours.titre = champTitreLot.value;
+  enregistrerLotLocal(lotEnCours);
+});
+
+formTitreLot.addEventListener("submit", async evenement => {
+  evenement.preventDefault();
+  if (traitementLot || !session || !lotEnCours) return;
+  const sessionCourante = session;
+  const lotId = lotEnCours.id;
+  const titre = champTitreLot.value.trim();
+  if (!titre) {
+    progressionLot.textContent = MESSAGES_LOT.TITRE_INVALIDE;
+    return;
+  }
+  lotEnCours.titre = titre;
+  enregistrerLotLocal(lotEnCours);
+  traitementLot = true;
+  actualiserCommandesLot();
+  progressionLot.textContent = "Enregistrement et archivage des photos…";
+  try {
+    const resultat = await appelerLot("validerTitre", { lotId, titre });
+    if (resultat) await terminerEnregistrementLot(lotId, resultat.quiz.titre);
+  } catch (erreur) {
+    if (session === sessionCourante) progressionLot.textContent = erreur.message;
+  } finally {
+    traitementLot = false;
+    actualiserCommandesLot();
+  }
+});
+
+const formRenommer = document.getElementById("formRenommer");
+const nouveauTitre = document.getElementById("nouveauTitre");
+const enregistrerRenommage = document.getElementById("enregistrerRenommage");
+const annulerRenommage = document.getElementById("annulerRenommage");
+const messageRenommage = document.getElementById("messageRenommage");
+let quizARenommer;
+
+function fermerRenommage() {
+  quizARenommer = null;
+  formRenommer.hidden = true;
+  nouveauTitre.value = "";
+  messageRenommage.textContent = "";
+}
+
+function proposerRenommage(quiz) {
+  if (enregistrerRenommage.disabled) return;
+  quizARenommer = quiz;
+  nouveauTitre.value = quiz.titre;
+  messageRenommage.textContent = "";
+  formRenommer.hidden = false;
+  nouveauTitre.focus();
+}
+
+annulerRenommage.addEventListener("click", fermerRenommage);
+formRenommer.addEventListener("submit", async evenement => {
+  evenement.preventDefault();
+  if (!quizARenommer || enregistrerRenommage.disabled) return;
+  const sessionCourante = session;
+  const titre = nouveauTitre.value.trim();
+  if (!titre) {
+    messageRenommage.textContent = MESSAGES_LOT.TITRE_INVALIDE;
+    return;
+  }
+  enregistrerRenommage.disabled = annulerRenommage.disabled = nouveauTitre.disabled = true;
+  messageRenommage.textContent = "Enregistrement du nouveau titre…";
+  try {
+    const resultat = await appelerLot("renommerQuiz", {
+      id: quizARenommer.id, titreActuel: quizARenommer.titre, titre
+    });
+    if (!resultat) return;
+    fermerRenommage();
+    messageRenommage.textContent = resultat.quiz.archiveRenommee
+      ? "Questionnaire et dossier d’archives renommés."
+      : "Questionnaire renommé. Aucun dossier d’archives lié.";
+    if (window.quizEnCours?.id === resultat.quiz.id) {
+      window.quizEnCours.titre = resultat.quiz.titre;
+      document.getElementById("titreQuiz").textContent = resultat.quiz.titre;
+      document.getElementById("messageQuiz").textContent = "Questionnaire chargé : " + resultat.quiz.titre;
+    }
+    await afficherListeQuiz();
+  } catch (erreur) {
+    if (session === sessionCourante) messageRenommage.textContent = erreur.message;
+  } finally {
+    enregistrerRenommage.disabled = annulerRenommage.disabled = nouveauTitre.disabled = false;
+  }
+});
 
 boutonFichiers.addEventListener("click", () => champPhotos.click());
 champPhotos.addEventListener("change", actualiserCommandesLot);

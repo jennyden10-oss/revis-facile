@@ -293,7 +293,7 @@ function traiterPostTest_(e) {
     }
 
     const actionsProtegees = [
-      "chargerQuiz", "verifierReponse", "listerQuiz", "preparerLot", "genererQuiz", "ajouterPhoto"
+      "chargerQuiz", "verifierReponse", "listerQuiz", "preparerLot", "genererQuiz", "ajouterPhoto", "validerTitre", "renommerQuiz"
     ];
     if (!actionsProtegees.includes(donnees.action)) {
       return reponseJson_(reponse);
@@ -324,6 +324,11 @@ if (donnees.action === "listerQuiz") {
     }
     if (donnees.action === "genererQuiz") {
       return reponseJson_({ succes: true, quiz: genererLot_(donnees) });
+    }
+    if (donnees.action === "validerTitre" || donnees.action === "renommerQuiz") {
+      const quiz = donnees.action === "validerTitre"
+        ? validerTitreLot_(donnees) : renommerQuiz_(donnees);
+      return reponseJson_({ succes: true, quiz });
     }
     if (donnees.action === "verifierReponse") {
       const quiz = chargerQuiz_(donnees.id);
@@ -772,72 +777,165 @@ function enregistrerPhoto_(donnees) {
 function genererLot_(donnees) {
   const props = PropertiesService.getScriptProperties();
   const dossierQuiz = dossierLotConfigure_(props, "DOSSIER_QUIZ");
-  const archives = dossierLotConfigure_(props, "DOSSIER_TRAITES");
   const nomFinal = "Quiz_" + donnees.lotId + ".json";
   const nomTemporaire = "Quiz_" + donnees.lotId + ".en-cours";
 
   const travail = avecVerrouSessions_(() => {
     const { cle, lot } = lireLot_(props, donnees);
     if (!lot) throw erreurLot_("LOT_INVALIDE");
-    if (lot.termine) return { resultat: lot.termine };
     const termine = fichierActif_(dossierQuiz, nomFinal);
     if (termine) {
-      const quiz = JSON.parse(termine.getBlob().getDataAsString("UTF-8"));
-      return { resultat: { id: quiz.id, titre: quiz.titre } };
+      return { resultat: resumeTitre_(lireQuizFichier_(termine)) };
     }
+    if (lot.termine) throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
+    const brouillon = fichierActif_(dossierQuiz, nomTemporaire);
+    if (brouillon) return { resultat: resumeTitre_(lireQuizFichier_(brouillon), true) };
     if (lot.enCoursJusqua > Date.now()) throw erreurLot_("GENERATION_EN_COURS");
     const dossier = DriveApp.getFolderById(lot.dossierId);
     const photos = Array.from({ length: lot.nombre }, (_, index) => photoLot_(dossier, index));
     if (photos.some(photo => !photo)) throw erreurLot_("LOT_INCOMPLET");
     lot.enCoursJusqua = Date.now() + DUREE_VERROU_LOT_MS;
     props.setProperty(cle, JSON.stringify(lot));
-    return { cle, lot, dossier, photos };
+    return { cle, lot, photos };
   });
 
   if (travail.resultat) return travail.resultat;
 
   try {
-    let fichier = fichierActif_(dossierQuiz, nomTemporaire);
     let quiz;
-    if (fichier) {
-      quiz = JSON.parse(fichier.getBlob().getDataAsString("UTF-8"));
-    } else {
-      try {
-        quiz = genererQuestionnaire_(travail.photos);
-      } catch (erreur) {
-        if (erreur.codeLot) throw erreur;
-        console.error(erreur);
-        throw erreurLot_("GEMINI_INDISPONIBLE");
-      }
-      quiz.id = donnees.lotId;
-      fichier = dossierQuiz.createFile(nomTemporaire, JSON.stringify(quiz), "application/json");
-    }
     try {
-      const titreDossier = quiz.titre.trim().replace(/[\\/:*?"<>|]/g, "-").slice(0, 80);
-      travail.dossier.setName(titreDossier);
-      const parents = travail.dossier.getParents();
+      quiz = genererQuestionnaire_(travail.photos);
+    } catch (erreur) {
+      if (erreur.codeLot) throw erreur;
+      console.error(erreur);
+      throw erreurLot_("GEMINI_INDISPONIBLE");
+    }
+    quiz.id = donnees.lotId;
+    quiz.titre = quiz.titre.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 80).trim();
+    if (!quiz.titre) throw erreurLot_("GEMINI_INDISPONIBLE");
+    dossierQuiz.createFile(nomTemporaire, JSON.stringify(quiz), "application/json");
+    return resumeTitre_(quiz, true);
+  } finally {
+    avecVerrouSessions_(() => {
+      const lot = JSON.parse(props.getProperty(travail.cle));
+      delete lot.enCoursJusqua;
+      props.setProperty(travail.cle, JSON.stringify(lot));
+    });
+  }
+}
+
+function lireQuizFichier_(fichier) {
+  return JSON.parse(fichier.getBlob().getDataAsString("UTF-8"));
+}
+
+function resumeTitre_(quiz, aValider = false) {
+  return { id: quiz.id, titre: quiz.titre, aValider };
+}
+
+function titreQuizValide_(valeur) {
+  const titre = typeof valeur === "string" ? valeur.trim() : "";
+  if (!titre || titre.length > 80 || /[\u0000-\u001f\u007f]/.test(titre)) {
+    throw erreurLot_("TITRE_INVALIDE");
+  }
+  return titre;
+}
+
+function nomArchiveQuiz_(titre) {
+  return titre.replace(/[\\/:*?"<>|]/g, "-");
+}
+
+function validerTitreLot_(donnees) {
+  const titre = titreQuizValide_(donnees.titre);
+  return avecVerrouSessions_(props => {
+    const { cle, lot } = lireLot_(props, donnees);
+    if (!lot) throw erreurLot_("LOT_INVALIDE");
+
+    const dossierQuiz = dossierLotConfigure_(props, "DOSSIER_QUIZ");
+    const nom = "Quiz_" + donnees.lotId;
+    const final = fichierActif_(dossierQuiz, nom + ".json");
+    if (final) return resumeTitre_(lireQuizFichier_(final));
+    const brouillon = fichierActif_(dossierQuiz, nom + ".en-cours");
+    if (!brouillon) throw erreurLot_("BROUILLON_INTROUVABLE");
+
+    const quiz = lireQuizFichier_(brouillon);
+    const dossier = DriveApp.getFolderById(lot.dossierId);
+    const archives = dossierLotConfigure_(props, "DOSSIER_TRAITES");
+    quiz.titre = titre;
+    quiz.dossierArchiveId = lot.dossierId;
+    try {
+      brouillon.setContent(JSON.stringify(quiz));
+      dossier.setName(nomArchiveQuiz_(titre));
+      const parents = dossier.getParents();
       if (!parents.hasNext() || parents.next().getId() !== archives.getId()) {
-        travail.dossier.moveTo(archives);
+        dossier.moveTo(archives);
       }
-      fichier.setName(nomFinal);
+      brouillon.setName(nom + ".json");
     } catch (erreur) {
       console.error(erreur);
       throw erreurLot_("ARCHIVAGE_INTERROMPU");
     }
-    travail.lot.termine = { id: quiz.id, titre: quiz.titre };
-    return travail.lot.termine;
-  } finally {
-    avecVerrouSessions_(() => {
-      delete travail.lot.enCoursJusqua;
-      props.setProperty(travail.cle, JSON.stringify(travail.lot));
-    });
+    lot.termine = true;
+    props.setProperty(cle, JSON.stringify(lot));
+    return resumeTitre_(quiz);
+  });
+}
+
+function renommerQuiz_(donnees) {
+  const titre = titreQuizValide_(donnees.titre);
+  if (typeof donnees.id !== "string" || !/^[a-f0-9-]{36}$/i.test(donnees.id)) {
+    throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
   }
+  const cle = "LOT_" + donnees.id;
+  return avecVerrouSessions_(props => {
+    const dossierQuiz = dossierLotConfigure_(props, "DOSSIER_QUIZ");
+    const fichier = fichierActif_(dossierQuiz, "Quiz_" + donnees.id + ".json");
+    if (!fichier) throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
+    const quiz = lireQuizFichier_(fichier);
+    if (quiz.titre !== donnees.titreActuel && quiz.titre !== titre) {
+      throw erreurLot_("TITRE_MODIFIE");
+    }
+
+    // Les questionnaires créés avant la validation du titre ont le lien dans le lot.
+    const lot = JSON.parse(props.getProperty(cle) || "null");
+    const archiveId = quiz.dossierArchiveId || lot?.dossierId;
+    let archive;
+    if (archiveId) {
+      archive = DriveApp.getFolderById(archiveId);
+      const archives = dossierLotConfigure_(props, "DOSSIER_TRAITES");
+      const parents = archive.getParents();
+      if (!parents.hasNext() || parents.next().getId() !== archives.getId()) {
+        throw erreurLot_("ARCHIVE_INTROUVABLE");
+      }
+    }
+
+    const ancienTitre = quiz.titre;
+    try {
+      if (archive) archive.setName(nomArchiveQuiz_(titre));
+      if (titre !== ancienTitre || (archive && !quiz.dossierArchiveId)) {
+        quiz.titre = titre;
+        if (archive) quiz.dossierArchiveId = archiveId;
+        fichier.setContent(JSON.stringify(quiz));
+      }
+    } catch (erreur) {
+      // En cas d'échec ambigu de setContent, se recaler sur le titre réellement écrit.
+      if (archive) {
+        try {
+          archive.setName(nomArchiveQuiz_(lireQuizFichier_(fichier).titre));
+        } catch (erreurReprise) {
+          console.error(erreurReprise);
+        }
+      }
+      console.error(erreur);
+      throw erreurLot_("RENOMMAGE_INTERROMPU");
+    }
+    return { ...resumeTitre_(quiz), archiveRenommee: Boolean(archive) };
+  });
 }
 
 // Interface publique du kit isolé, avec la même authentification que le serveur.
 function appelerTest(action, parametres) {
   if (!["connexion", "deconnexion", "listerQuiz", "chargerQuiz",
-        "preparerLot", "ajouterPhoto", "genererQuiz", "verifierReponse"].includes(action)) {
+        "preparerLot", "ajouterPhoto", "genererQuiz", "verifierReponse", "validerTitre", "renommerQuiz"].includes(action)) {
     return { succes: false };
   }
   return JSON.parse(traiterPostTest_({
