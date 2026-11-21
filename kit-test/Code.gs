@@ -257,10 +257,24 @@ function chargerQuiz_(id) {
   return resultat.quiz;
 }
 
-function doGet() {
+function doGet(e) {
+  if (e?.parameter?.preproduction === "verifier") {
+    return reponseJson_({ environnement: preproductionActive_() ? "revis-facile-test-v1" : null });
+  }
   return HtmlService.createHtmlOutputFromFile("Index")
     .setTitle("Révis’Facile — Test multiphoto")
     .addMetaTag("viewport", "width=device-width, initial-scale=1");
+}
+
+function preproductionActive_() {
+  return PropertiesService.getScriptProperties().getProperty("REVIS_FACILE_PREPRODUCTION") === "oui";
+}
+
+function doPost(e) {
+  if (!preproductionActive_()) {
+    return reponseJson_({ succes: false, erreur: "PREPRODUCTION_DESACTIVEE" });
+  }
+  return traiterPostTest_(e);
 }
 
 function traiterPostTest_(e) {
