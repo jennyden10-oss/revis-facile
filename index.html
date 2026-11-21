@@ -245,7 +245,23 @@ async function afficherListeQuiz() {
     zone.textContent = "Erreur de connexion.";
   }
 }
+async function envoyerPhotosCours() {
+  const fichiers = document.getElementById("photosCours").files;
+  const zone = document.getElementById("nombrePhotos");
+  const code = document.getElementById("codeFamilial").value;
 
+  if (!code) {
+    zone.textContent = "Saisis d'abord le code familial.";
+    return;
+  }
+
+  if (fichiers.length === 0) {
+    zone.textContent = "Sélectionne d'abord des photos.";
+    return;
+  }
+
+  zone.textContent = "Préparation de l'envoi...";
+}
 async function ouvrirQuestionnaire() {
   const message = document.getElementById("messageQuiz");
 const adresse = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquFVRKy9MLtQLQn8uy1y8dRPLIUdqT0wWaV0ul_H-i8Kaiwcw/exec";
