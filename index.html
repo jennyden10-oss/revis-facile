@@ -18,6 +18,18 @@
 
   <p id="nombrePhotos">Aucune photo sélectionnée.</p>
 </div>
+  <script>
+document.getElementById("photosCours").addEventListener("change", function () {
+  const nombre = this.files.length;
+
+  document.getElementById("nombrePhotos").textContent =
+    nombre === 0
+      ? "Aucune photo sélectionnée."
+      : nombre === 1
+        ? "1 photo sélectionnée."
+        : nombre + " photos sélectionnées.";
+});
+</script>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#4169e1">
 <meta name="apple-mobile-web-app-capable" content="yes">
