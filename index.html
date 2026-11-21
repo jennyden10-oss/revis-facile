@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+  <meta name="apps-script-url" content="">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#4169e1">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -18,6 +19,21 @@
       padding: 40px 20px;
     }
     h1 { color: #4455aa; }
+    .deconnexion {
+      background: transparent;
+      border: 0;
+      color: #4455aa;
+      padding: 10px;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    #codeFamilial {
+      box-sizing: border-box;
+      display: block;
+      width: 100%;
+      margin: 8px 0 12px;
+      padding: 10px;
+    }
     .carte {
       background: white;
       border-radius: 16px;
@@ -31,16 +47,24 @@
 <body>
   <h1>Révis'Facile 📚</h1>
 
+<section class="carte" id="connexion" aria-labelledby="titreConnexion">
+  <h2 id="titreConnexion">Connexion familiale</h2>
+  <form id="formConnexion">
+    <label for="codeFamilial">Code familial</label>
+    <input id="codeFamilial" type="password" autocomplete="off" required>
+    <button id="boutonConnexion" type="submit">Se connecter</button>
+  </form>
+  <p id="messageConnexion" role="status"></p>
+</section>
+
+<main id="espaceRevision" hidden>
+  <button id="boutonDeconnexion" type="button" class="deconnexion">
+    Se déconnecter
+  </button>
+  <p id="messageSession" role="status"></p>
+
 <div class="carte">
   <h2>📚 Ouvrir un questionnaire</h2>
-
-  <input
-    id="codeFamilial"
-    type="password"
-    placeholder="Code d'accès familial"
-    autocomplete="off"
-    style="width:95%;padding:10px;margin:6px 0"
-  >
   <button type="button" onclick="afficherListeQuiz()">
     📚 Mes questionnaires
   </button>
@@ -83,30 +107,94 @@ document.getElementById("photosCours").addEventListener("change", function () {
 </script>
 
 <script>
-const ADRESSE_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquFVRKy9MLtQLQn8uy1y8dRPLIUdqT0wWaV0ul_H-i8Kaiwcw/exec";
+const ADRESSE_APPS_SCRIPT = document.querySelector('meta[name="apps-script-url"]').content.trim();
+const CLE_SESSION = "revisFacileSession:" + ADRESSE_APPS_SCRIPT;
+let session = null;
+let minuterieExpiration;
+
+async function appelerServeur(action, parametres) {
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(ADRESSE_APPS_SCRIPT)) {
+    throw new Error("Adresse Apps Script de test à configurer.");
+  }
+  const reponse = await fetch(ADRESSE_APPS_SCRIPT, {
+    method: "POST",
+    body: JSON.stringify({ action, ...parametres }),
+    redirect: "follow"
+  });
+  if (!reponse.ok) throw new Error("Service indisponible.");
+  return reponse.json();
+}
+
+function sessionAuBonFormat(valeur) {
+  return valeur && typeof valeur.jeton === "string" &&
+    /^[A-Za-z0-9_-]{43}$/.test(valeur.jeton) &&
+    Number.isFinite(valeur.expireA) && valeur.expireA > Date.now();
+}
+
+function terminerSession(message = "", effacerStockage = true) {
+  clearTimeout(minuterieExpiration);
+  session = null;
+  try {
+    if (effacerStockage) localStorage.removeItem(CLE_SESSION);
+  } catch {
+    // Le stockage peut être désactivé par le navigateur.
+  }
+  document.getElementById("espaceRevision").hidden = true;
+  document.getElementById("zoneQuiz").hidden = true;
+  for (const id of ["listeQuiz", "reponsesQuiz", "correctionQuiz"]) {
+    document.getElementById(id).replaceChildren();
+  }
+  for (const id of ["titreQuiz", "questionQuiz", "progressionQuiz", "scoreFinalQuiz"]) {
+    document.getElementById(id).textContent = "";
+  }
+  document.getElementById("messageQuiz").textContent = "";
+  document.getElementById("messageSession").textContent = "";
+  document.getElementById("photosCours").value = "";
+  document.getElementById("nombrePhotos").textContent = "Aucune photo sélectionnée.";
+  window.quizEnCours = null;
+  window.idSessionQuiz = null;
+  document.getElementById("connexion").hidden = false;
+  document.getElementById("messageConnexion").textContent = message;
+}
+
+function surveillerExpiration() {
+  if (!session) return;
+  const restant = session.expireA - Date.now();
+  if (restant <= 0) {
+    terminerSession("Ta session a expiré. Saisis le code familial.");
+    return;
+  }
+  minuterieExpiration = setTimeout(surveillerExpiration, Math.min(restant, 2147483647));
+}
+
+function ouvrirSession(valeur) {
+  session = { jeton: valeur.jeton, expireA: valeur.expireA };
+  document.getElementById("connexion").hidden = true;
+  document.getElementById("espaceRevision").hidden = false;
+  surveillerExpiration();
+  return afficherListeQuiz();
+}
+
+async function appelerActionProtegee(action, parametres = {}) {
+  const sessionCourante = session;
+  if (!sessionCourante) return null;
+  const donnees = await appelerServeur(action, { ...parametres, jeton: sessionCourante.jeton });
+  if (session !== sessionCourante) return null;
+  if (donnees.erreur === "SESSION_INVALIDE") {
+    terminerSession("Reconnecte-toi avec le code familial.");
+    return null;
+  }
+  return donnees;
+}
 
 async function afficherListeQuiz() {
   const zone = document.getElementById("listeQuiz");
-  const code = document.getElementById("codeFamilial").value;
-
-  if (!code) {
-    zone.textContent = "Saisis d'abord le code familial.";
-    return;
-  }
 
   zone.textContent = "Recherche des questionnaires...";
 
   try {
-    const reponse = await fetch(ADRESSE_APPS_SCRIPT, {
-      method: "POST",
-      body: JSON.stringify({
-        action: "listerQuiz",
-        codeAcces: code
-      }),
-      redirect: "follow"
-    });
-
-    const donnees = await reponse.json();
+    const donnees = await appelerActionProtegee("listerQuiz");
+    if (!donnees) return;
 
     if (!donnees.succes || !Array.isArray(donnees.questionnaires)) {
       zone.textContent = "Impossible de récupérer les questionnaires.";
@@ -141,14 +229,9 @@ async function afficherListeQuiz() {
   }
 }
 async function envoyerPhotosCours() {
+  const sessionEnvoi = session;
   const fichiers = document.getElementById("photosCours").files;
   const zone = document.getElementById("nombrePhotos");
-  const code = document.getElementById("codeFamilial").value;
-
-  if (!code) {
-    zone.textContent = "Saisis d'abord le code familial.";
-    return;
-  }
 
   if (fichiers.length === 0) {
     zone.textContent = "Sélectionne d'abord des photos.";
@@ -170,18 +253,12 @@ async function envoyerPhotosCours() {
     const contenuBase64 = await convertirPhotoBase64(fichier);
 
 
-    const reponse = await fetch(ADRESSE_APPS_SCRIPT, {
-      method: "POST",
-      body: JSON.stringify({
-        action: "ajouterPhoto",
-        codeAcces: code,
-        typeFichier: fichier.type,
-        contenuBase64: contenuBase64
-      }),
-      redirect: "follow"
+    if (session !== sessionEnvoi) return;
+    const donnees = await appelerActionProtegee("ajouterPhoto", {
+      typeFichier: fichier.type,
+      contenuBase64
     });
-
-    const donnees = await reponse.json();
+    if (!donnees) return;
 
     if (!donnees.succes) {
       throw new Error("Enregistrement refusé.");
@@ -213,34 +290,17 @@ function convertirPhotoBase64(fichier) {
 }
 async function ouvrirQuestionnaire(id) {
   const message = document.getElementById("messageQuiz");
-  const code = document.getElementById("codeFamilial").value;
-
-  if (!id || !code) {
-    message.textContent =
-      (!id ? "Identifiant du questionnaire manquant. " : "") +
-      (!code ? "Code familial manquant." : "");
-    return;
-  }
+  if (!id) return;
 
   message.textContent = "Chargement en cours...";
 
   try {
-    const reponse = await fetch(ADRESSE_APPS_SCRIPT, {
-      method: "POST",
-      body: JSON.stringify({
-        action: "chargerQuiz",
-        id: id,
-        codeAcces: code
-      }),
-      redirect: "follow"
-    });
-
-    const donnees = await reponse.json();
+    const donnees = await appelerActionProtegee("chargerQuiz", { id });
+    if (!donnees) return;
 
     if (donnees.succes && donnees.quiz) {
       message.textContent = "Questionnaire chargé : " + donnees.quiz.titre;
       window.quizEnCours = donnees.quiz;
-      window.codeSessionQuiz = code;
       window.idSessionQuiz = id;
       positionQuiz = 0;
       scoreQuiz = 0;
@@ -251,8 +311,6 @@ async function ouvrirQuestionnaire(id) {
   } catch (erreur) {
     message.textContent = "Erreur de connexion.";
     console.error(erreur);
-  } finally {
-    document.getElementById("codeFamilial").value = "";
   }
 }
 </script>
@@ -359,31 +417,13 @@ function afficherQuestionQuiz() {
 }
 
 async function verifierAvecGeminiQuiz(reponseEleve) {
-  const id = window.idSessionQuiz;
-  const code = window.codeSessionQuiz;
-
-  if (!id || !code) {
-    throw new Error("Session de révision indisponible.");
-  }
-
-  const resultat = await fetch(ADRESSE_APPS_SCRIPT, {
-    method: "POST",
-    body: JSON.stringify({
-      action: "verifierReponse",
-      id: id,
-      index: positionQuiz,
-      reponse: reponseEleve,
-      codeAcces: code
-    }),
-    redirect: "follow"
+  const donnees = await appelerActionProtegee("verifierReponse", {
+    id: window.idSessionQuiz,
+    index: positionQuiz,
+    reponse: reponseEleve
   });
 
-  if (!resultat.ok) {
-    throw new Error("Erreur de connexion.");
-  }
-
-  const donnees = await resultat.json();
-
+  if (!donnees) return null;
   if (!donnees.succes ||
       typeof donnees.correcte !== "boolean") {
     throw new Error("Vérification indisponible.");
@@ -440,6 +480,7 @@ if (!juste) {
 
   try {
     juste = await verifierAvecGeminiQuiz(champ.value);
+    if (juste === null || window.quizEnCours !== quiz) return;
   } catch (erreur) {
     console.error("Correction indisponible :", erreur);
 
@@ -481,6 +522,86 @@ champ.disabled = true;
   document.getElementById("boutonQuiz").textContent =
     positionQuiz + 1 === quiz.questions.length
       ? "Voir mon résultat" : "Continuer";
+}
+</script>
+
+</main>
+
+<script>
+const champCode = document.getElementById("codeFamilial");
+const boutonConnexion = document.getElementById("boutonConnexion");
+const boutonDeconnexion = document.getElementById("boutonDeconnexion");
+const messageConnexion = document.getElementById("messageConnexion");
+
+document.getElementById("formConnexion").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (boutonConnexion.disabled || !champCode.value) return;
+  boutonConnexion.disabled = true;
+  messageConnexion.textContent = "Connexion en cours…";
+  try {
+    const codeAcces = champCode.value;
+    champCode.value = "";
+    const donnees = await appelerServeur("connexion", { codeAcces });
+    if (!donnees.succes || !sessionAuBonFormat(donnees)) {
+      messageConnexion.textContent = {
+        CODE_INCORRECT: "Code familial incorrect.",
+        TROP_DE_TENTATIVES: "Trop de tentatives. Réessaie dans 15 minutes."
+      }[donnees.erreur] || "Connexion indisponible.";
+      return;
+    }
+    try {
+      localStorage.setItem(CLE_SESSION, JSON.stringify({
+        jeton: donnees.jeton,
+        expireA: donnees.expireA
+      }));
+    } catch {
+      document.getElementById("messageSession").textContent =
+        "Ce navigateur ne peut pas mémoriser la connexion.";
+    }
+    await ouvrirSession(donnees);
+  } catch (erreur) {
+    messageConnexion.textContent = erreur.message === "Adresse Apps Script de test à configurer."
+      ? erreur.message : "Connexion indisponible. Réessaie.";
+  } finally {
+    boutonConnexion.disabled = false;
+  }
+});
+
+boutonDeconnexion.addEventListener("click", async () => {
+  if (!session || boutonDeconnexion.disabled) return;
+  const sessionCourante = session;
+  boutonDeconnexion.disabled = true;
+  const message = document.getElementById("messageSession");
+  message.textContent = "Déconnexion en cours…";
+  try {
+    const donnees = await appelerServeur("deconnexion", { jeton: sessionCourante.jeton });
+    if (!donnees.succes) throw new Error("Révocation indisponible.");
+    if (session === sessionCourante) terminerSession("Tu es déconnectée.");
+  } catch {
+    if (session === sessionCourante) {
+      message.textContent = "Déconnexion non confirmée. Réessaie.";
+    }
+  } finally {
+    boutonDeconnexion.disabled = false;
+  }
+});
+
+window.addEventListener("storage", event => {
+  if ((event.key === CLE_SESSION || event.key === null) && session &&
+      event.newValue !== JSON.stringify(session)) {
+    terminerSession("La session a changé dans un autre onglet.", false);
+  }
+});
+
+try {
+  const memorisee = JSON.parse(localStorage.getItem(CLE_SESSION));
+  if (sessionAuBonFormat(memorisee)) {
+    ouvrirSession(memorisee);
+  } else if (memorisee) {
+    terminerSession("Ta session a expiré. Saisis le code familial.");
+  }
+} catch {
+  terminerSession();
 }
 </script>
 
