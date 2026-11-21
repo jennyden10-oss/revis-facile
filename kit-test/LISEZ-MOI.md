@@ -36,6 +36,14 @@ $aleatoireSession.Dispose()
 
 6. Dans **Mes questionnaires**, appuyer sur **Renommer**, puis enregistrer un autre titre. Vérifier que le titre affiché et celui du dossier d’archives changent, que les questions et les photos sont toujours présentes et qu’aucun fichier JSON supplémentaire n’apparaît.
 
+## Tester la mise à la corbeille
+
+1. Dans **Mes questionnaires**, appuyer sur **Supprimer** à côté de **Renommer**. Vérifier que la confirmation affiche le bon titre. Appuyer sur **Annuler** et vérifier que le questionnaire est toujours visible.
+2. Répéter et confirmer. Le questionnaire doit disparaître de la liste. Dans la corbeille Drive du compte qui a installé le kit, vérifier que le JSON et le dossier d’archives sont présents.
+3. Restaurer **les deux éléments** depuis la corbeille Drive. Actualiser **Mes questionnaires**, ouvrir le questionnaire restauré et vérifier que les photos sont toujours présentes dans le dossier d’archives.
+4. Refaire l’essai avec le questionnaire fictif **Géographie**, créé sans dossier d’archives. Seul son JSON doit aller dans la corbeille.
+5. Pour vérifier la reprise, couper le réseau pendant la confirmation sur un questionnaire fictif. Réactiver le réseau, confirmer de nouveau si le formulaire est toujours visible, puis vérifier la liste et la corbeille.
+
 La page d’essai est hébergée par Apps Script. Elle permet de tester la sélection, la compression, les sessions, Gemini et Drive sur Firefox Android et sur ordinateur. La communication depuis le domaine GitHub Pages reste à valider séparément. Si une exécution est interrompue brutalement, son lot peut rester réservé jusqu’à dix minutes avant de pouvoir être repris.
 
 Les contrôles locaux utilisent seulement les images fictives et des simulations de Drive, Gemini et du navigateur. Depuis la racine du dépôt, exécuter `node kit-test/tests-lots.cjs`.

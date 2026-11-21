@@ -78,6 +78,13 @@
     <button id="annulerRenommage" type="button">Annuler</button>
   </form>
   <p id="messageRenommage" role="status"></p>
+  <form id="formSuppression" class="formulaire-titre" hidden>
+    <p id="confirmationSuppression"></p>
+    <p>Le questionnaire et ses photos liées pourront être restaurés dans la corbeille Drive.</p>
+    <button id="confirmerSuppression" type="submit">Mettre à la corbeille</button>
+    <button id="annulerSuppression" type="button">Annuler</button>
+  </form>
+  <p id="messageSuppression" role="status"></p>
   <p id="messageQuiz"></p>
 </div>
 
@@ -152,6 +159,7 @@ function terminerSession(message = "", effacerStockage = true) {
   document.getElementById("messageSession").textContent = "";
   reinitialiserPhotos();
   fermerRenommage();
+  fermerSuppression();
   window.quizEnCours = null;
   window.idSessionQuiz = null;
   document.getElementById("connexion").hidden = false;
@@ -229,9 +237,17 @@ async function afficherListeQuiz() {
       renommer.setAttribute("aria-label", "Renommer « " + quiz.titre + " »");
       renommer.onclick = () => proposerRenommage(quiz);
 
+      const supprimer = document.createElement("button");
+      supprimer.type = "button";
+      supprimer.textContent = "Supprimer";
+      supprimer.setAttribute("aria-label", "Supprimer « " + quiz.titre + " »");
+      supprimer.onclick = () => proposerSuppression(quiz);
+
       const ligne = document.createElement("div");
+      ligne.dataset.quizId = quiz.id;
       ligne.appendChild(bouton);
       ligne.appendChild(renommer);
+      ligne.appendChild(supprimer);
       zone.appendChild(ligne);
     });
 
@@ -626,12 +642,16 @@ const MESSAGES_LOT = {
   QUESTIONNAIRE_INTROUVABLE: "Ce questionnaire est introuvable. Actualise Mes questionnaires.",
   ARCHIVE_INTROUVABLE: "Le dossier d’archives lié à ce questionnaire est introuvable.",
   TITRE_MODIFIE: "Le titre a changé. Actualise Mes questionnaires avant de le renommer.",
-  RENOMMAGE_INTERROMPU: "Le renommage a été interrompu. Réessaie."
+  RENOMMAGE_INTERROMPU: "Le renommage a été interrompu. Réessaie.",
+  QUESTIONNAIRE_AMBIGU: "Plusieurs fichiers correspondent à ce questionnaire. Vérifie-les dans Drive.",
+  SUPPRESSION_INTERROMPUE: "Drive n’a pas terminé la mise à la corbeille. Le questionnaire reste disponible. Réessaie.",
+  SUPPRESSION_A_REPRENDRE: "La mise à la corbeille est incomplète. Réessaie la suppression du même questionnaire pour la terminer."
 };
 
 async function appelerAvecDelai(action, parametres) {
   const commande = action === "validerTitre" ? "Enregistrer le questionnaire"
-    : action === "renommerQuiz" ? "Enregistrer" : "Réessayer";
+    : action === "renommerQuiz" ? "Enregistrer"
+    : action === "supprimerQuiz" ? "Mettre à la corbeille" : "Réessayer";
   const consigne = " Vérifie ta connexion, puis appuie sur " + commande + ".";
   const messageHorsLigne = "Connexion Internet interrompue." + consigne;
   if (navigator.onLine === false) throw new Error(messageHorsLigne);
@@ -793,7 +813,8 @@ function fermerRenommage() {
 }
 
 function proposerRenommage(quiz) {
-  if (enregistrerRenommage.disabled) return;
+  if (enregistrerRenommage.disabled || confirmerSuppression.disabled) return;
+  fermerSuppression();
   quizARenommer = quiz;
   nouveauTitre.value = quiz.titre;
   messageRenommage.textContent = "";
@@ -832,6 +853,64 @@ formRenommer.addEventListener("submit", async evenement => {
     if (session === sessionCourante) messageRenommage.textContent = erreur.message;
   } finally {
     enregistrerRenommage.disabled = annulerRenommage.disabled = nouveauTitre.disabled = false;
+  }
+});
+
+const formSuppression = document.getElementById("formSuppression");
+const confirmationSuppression = document.getElementById("confirmationSuppression");
+const confirmerSuppression = document.getElementById("confirmerSuppression");
+const annulerSuppression = document.getElementById("annulerSuppression");
+const messageSuppression = document.getElementById("messageSuppression");
+let quizASupprimer;
+
+function fermerSuppression() {
+  quizASupprimer = null;
+  formSuppression.hidden = true;
+  confirmationSuppression.textContent = "";
+  messageSuppression.textContent = "";
+}
+
+function proposerSuppression(quiz) {
+  if (confirmerSuppression.disabled || enregistrerRenommage.disabled) return;
+  fermerRenommage();
+  quizASupprimer = quiz;
+  confirmationSuppression.textContent = "Mettre « " + quiz.titre + " » à la corbeille ?";
+  messageSuppression.textContent = "";
+  formSuppression.hidden = false;
+  annulerSuppression.focus();
+}
+
+annulerSuppression.addEventListener("click", fermerSuppression);
+formSuppression.addEventListener("submit", async evenement => {
+  evenement.preventDefault();
+  if (!session || !quizASupprimer || confirmerSuppression.disabled) return;
+  const sessionCourante = session;
+  const { id, titre } = quizASupprimer;
+  confirmerSuppression.disabled = annulerSuppression.disabled = true;
+  messageSuppression.textContent = "Mise à la corbeille…";
+  try {
+    const resultat = await appelerLot("supprimerQuiz", { id, titre });
+    if (!resultat) return;
+    fermerSuppression();
+    messageSuppression.textContent = resultat.archiveSupprimee
+      ? "Questionnaire et photos placés dans la corbeille Drive."
+      : resultat.dejaSupprime ? "Le questionnaire ne figure plus dans la liste."
+        : "Questionnaire placé dans la corbeille Drive. Aucun dossier d’archives lié.";
+    const liste = document.getElementById("listeQuiz");
+    for (const ligne of Array.from(liste.children)) {
+      if (ligne.dataset.quizId === id) ligne.remove();
+    }
+    if (!liste.children.length) liste.textContent = "Aucun questionnaire disponible.";
+    if (window.idSessionQuiz === id) {
+      window.quizEnCours = null;
+      window.idSessionQuiz = null;
+      document.getElementById("zoneQuiz").hidden = true;
+      document.getElementById("messageQuiz").textContent = "";
+    }
+  } catch (erreur) {
+    if (session === sessionCourante) messageSuppression.textContent = erreur.message;
+  } finally {
+    confirmerSuppression.disabled = annulerSuppression.disabled = false;
   }
 });
 

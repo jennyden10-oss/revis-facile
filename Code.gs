@@ -259,13 +259,9 @@ function chargerQuiz_(id) {
       .getProperty("DOSSIER_QUIZ")
   );
 
-  const fichiers = dossier.getFilesByName("Quiz_" + id + ".json");
-
-  if (!fichiers.hasNext()) {
-    throw new Error("Questionnaire introuvable.");
-  }
-
-  return JSON.parse(fichiers.next().getBlob().getDataAsString());
+  const fichier = fichierActif_(dossier, "Quiz_" + id + ".json");
+  if (!fichier) throw new Error("Questionnaire introuvable.");
+  return lireQuizFichier_(fichier);
 }
 
 function doGet(e) {
@@ -317,7 +313,7 @@ function doPost(e) {
     }
 
     const actionsProtegees = [
-      "chargerQuiz", "verifierReponse", "listerQuiz", "preparerLot", "genererQuiz", "ajouterPhoto", "validerTitre", "renommerQuiz"
+      "chargerQuiz", "verifierReponse", "listerQuiz", "preparerLot", "genererQuiz", "ajouterPhoto", "validerTitre", "renommerQuiz", "supprimerQuiz"
     ];
     if (!actionsProtegees.includes(donnees.action)) {
       return reponseJson_(reponse);
@@ -353,6 +349,9 @@ if (donnees.action === "listerQuiz") {
       const quiz = donnees.action === "validerTitre"
         ? validerTitreLot_(donnees) : renommerQuiz_(donnees);
       return reponseJson_({ succes: true, quiz });
+    }
+    if (donnees.action === "supprimerQuiz") {
+      return reponseJson_({ succes: true, ...supprimerQuiz_(donnees) });
     }
     if (donnees.action === "verifierReponse") {
       const quiz = chargerQuiz_(donnees.id);
@@ -524,7 +523,7 @@ function listerQuiz_() {
   while (fichiers.hasNext()) {
     const fichier = fichiers.next();
 
-    if (!fichier.getName().toLowerCase().endsWith(".json")) {
+    if (fichier.isTrashed() || !fichier.getName().toLowerCase().endsWith(".json")) {
       continue;
     }
 
@@ -909,7 +908,6 @@ function renommerQuiz_(donnees) {
   if (typeof donnees.id !== "string" || !/^[a-f0-9-]{36}$/i.test(donnees.id)) {
     throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
   }
-  const cle = "LOT_" + donnees.id;
   return avecVerrouSessions_(props => {
     const dossierQuiz = dossierLotConfigure_(props, "DOSSIER_QUIZ");
     const fichier = fichierActif_(dossierQuiz, "Quiz_" + donnees.id + ".json");
@@ -919,18 +917,11 @@ function renommerQuiz_(donnees) {
       throw erreurLot_("TITRE_MODIFIE");
     }
 
-    // Les questionnaires créés avant la validation du titre ont le lien dans le lot.
-    const lot = JSON.parse(props.getProperty(cle) || "null");
-    const archiveId = quiz.dossierArchiveId || lot?.dossierId;
-    let archive;
-    if (archiveId) {
-      archive = DriveApp.getFolderById(archiveId);
-      const archives = dossierLotConfigure_(props, "DOSSIER_TRAITES");
-      const parents = archive.getParents();
-      if (!parents.hasNext() || parents.next().getId() !== archives.getId()) {
-        throw erreurLot_("ARCHIVE_INTROUVABLE");
-      }
+    if (props.getProperty("SUPPRESSION_" + donnees.id)) {
+      throw erreurLot_("SUPPRESSION_A_REPRENDRE");
     }
+    const archive = archiveLieeQuiz_(props, quiz);
+    const archiveId = archive?.getId();
 
     const ancienTitre = quiz.titre;
     try {
@@ -954,4 +945,105 @@ function renommerQuiz_(donnees) {
     }
     return { ...resumeTitre_(quiz), archiveRenommee: Boolean(archive) };
   });
+}
+
+function archiveLieeQuiz_(props, quiz) {
+  // Les questionnaires de l'étape 3 peuvent encore référencer leur dossier via le lot.
+  const lot = JSON.parse(props.getProperty("LOT_" + quiz.id) || "null");
+  const archiveId = quiz.dossierArchiveId || lot?.dossierId;
+  if (!archiveId) return null;
+
+  try {
+    const archive = DriveApp.getFolderById(archiveId);
+    const racine = dossierLotConfigure_(props, "DOSSIER_TRAITES");
+    const parents = archive.getParents();
+    while (parents.hasNext()) {
+      if (parents.next().getId() === racine.getId()) return archive;
+    }
+  } catch (erreur) {
+    console.error(erreur);
+  }
+  throw erreurLot_("ARCHIVE_INTROUVABLE");
+}
+
+function supprimerQuiz_(donnees) {
+  const id = donnees.id;
+  if (typeof id !== "string" || !/^[a-f0-9-]{36}$/i.test(id)) {
+    throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
+  }
+  return avecVerrouSessions_(props => {
+    const cle = "SUPPRESSION_" + id;
+    let operation = JSON.parse(props.getProperty(cle) || "null");
+    let fichier, archive;
+
+    if (operation) {
+      fichier = DriveApp.getFileById(operation.fichierId);
+      archive = operation.archiveId ? DriveApp.getFolderById(operation.archiveId) : null;
+    } else {
+      const dossierQuiz = dossierLotConfigure_(props, "DOSSIER_QUIZ");
+      fichier = fichierQuizPourSuppression_(dossierQuiz, id);
+      // Une réponse réseau perdue peut conduire à rejouer une suppression déjà terminée.
+      if (!fichier) return { dejaSupprime: true };
+      const quiz = lireQuizFichier_(fichier);
+      if (quiz.id !== id) throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
+      if (quiz.titre !== donnees.titre) throw erreurLot_("TITRE_MODIFIE");
+      archive = archiveLieeQuiz_(props, quiz);
+      operation = {
+        fichierId: fichier.getId(),
+        archiveId: archive?.getId(),
+        archiveDejaEnCorbeille: archive?.isTrashed() || false
+      };
+      props.setProperty(cle, JSON.stringify(operation));
+    }
+
+    try {
+      // Le questionnaire reste visible tant que son dossier n'est pas en corbeille.
+      if (archive && !archive.isTrashed()) archive.setTrashed(true);
+      if (!fichier.isTrashed()) fichier.setTrashed(true);
+    } catch (erreur) {
+      console.error(erreur);
+      try {
+        // Drive peut avoir exécuté l'écriture avant de signaler une erreur.
+        if (fichier.isTrashed() && (!archive || archive.isTrashed())) {
+          props.deleteProperty(cle);
+          return { archiveSupprimee: Boolean(archive) };
+        }
+        if (fichier.isTrashed()) fichier.setTrashed(false);
+        if (archive && !operation.archiveDejaEnCorbeille && archive.isTrashed()) {
+          archive.setTrashed(false);
+        }
+        props.deleteProperty(cle);
+      } catch (erreurRestauration) {
+        // Conserver les identifiants pour reprendre la même opération.
+        console.error(erreurRestauration);
+        throw erreurLot_("SUPPRESSION_A_REPRENDRE");
+      }
+      throw erreurLot_("SUPPRESSION_INTERROMPUE");
+    }
+    props.deleteProperty(cle);
+    return { archiveSupprimee: Boolean(archive) };
+  });
+}
+
+function fichierQuizPourSuppression_(dossier, id) {
+  const canonique = fichierActif_(dossier, "Quiz_" + id + ".json");
+  if (canonique) return canonique;
+
+  // La liste historique accepte aussi des fichiers JSON portant un autre nom.
+  let resultat = null;
+  const fichiers = dossier.getFiles();
+  while (fichiers.hasNext()) {
+    const fichier = fichiers.next();
+    if (fichier.isTrashed() || !fichier.getName().toLowerCase().endsWith(".json")) continue;
+    let quiz;
+    try {
+      quiz = lireQuizFichier_(fichier);
+    } catch {
+      continue;
+    }
+    if (quiz?.id !== id || !Array.isArray(quiz.questions)) continue;
+    if (resultat) throw erreurLot_("QUESTIONNAIRE_AMBIGU");
+    resultat = fichier;
+  }
+  return resultat;
 }

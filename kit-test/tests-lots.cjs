@@ -12,6 +12,7 @@ const iterateur = objets => {
 
 function environnement() {
   const dossiers = new Map();
+  const fichiersDrive = new Map();
   const props = new Map([
     ["DOSSIER_COURS", "entree"],
     ["DOSSIER_QUIZ", "quiz"],
@@ -21,10 +22,17 @@ function environnement() {
     ["GEMINI_API_KEY", "clé simulée"]
   ]);
   const pannes = { gemini: false, deplacement: false, publication: false, contenu: false, apresCreationPhoto: false };
+  Object.assign(pannes, { archiveCorbeille: false, fichierCorbeille: false, apresFichierCorbeille: false, restaurerArchive: false });
   function dossier(id, nom = id, parent = null) {
+    let enCorbeille = false;
     const contenu = {
       id, nom, parent, fichiers: [],
       getId: () => id,
+      isTrashed: () => enCorbeille,
+      setTrashed: valeur => {
+        if (valeur ? pannes.archiveCorbeille : pannes.restaurerArchive) throw new Error("Corbeille archives indisponible");
+        enCorbeille = valeur;
+      },
       getParents: () => iterateur(contenu.parent ? [contenu.parent] : []),
       getFiles: () => iterateur(contenu.fichiers),
       getFilesByName: nomFichier => iterateur(contenu.fichiers.filter(f => f.getName() === nomFichier)),
@@ -40,10 +48,18 @@ function environnement() {
       createFile: (source, texte, mime) => {
         let blob = typeof source === "string" ? creerBlob(Buffer.from(texte), mime, source) : source;
         let nomFichier = typeof source === "string" ? source : source.nom;
+        const fichierId = crypto.randomUUID();
+        let fichierEnCorbeille = false;
         const fichier = {
+          getId: () => fichierId,
           getName: () => nomFichier,
           getBlob: () => blob,
-          isTrashed: () => false,
+          isTrashed: () => fichierEnCorbeille,
+          setTrashed: valeur => {
+            if (valeur && pannes.fichierCorbeille) throw new Error("Corbeille questionnaires indisponible");
+            fichierEnCorbeille = valeur;
+            if (valeur && pannes.apresFichierCorbeille) throw new Error("Réponse Drive perdue");
+          },
           setContent: texte => {
             if (pannes.contenu) throw new Error("Écriture interrompue");
             blob = creerBlob(Buffer.from(texte), mime, nomFichier);
@@ -53,6 +69,7 @@ function environnement() {
             nomFichier = nouveau;
           }
         };
+        fichiersDrive.set(fichierId, fichier);
         contenu.fichiers.push(fichier);
         if (pannes.apresCreationPhoto && mime === undefined) throw new Error("Réponse Drive interrompue");
         return fichier;
@@ -85,7 +102,7 @@ function environnement() {
   const contexte = vm.createContext({
     console: { error() {}, warn() {} },
     Logger: { log() {} },
-    DriveApp: { getFolderById: id => dossiers.get(id) },
+    DriveApp: { getFolderById: id => dossiers.get(id), getFileById: id => fichiersDrive.get(id) },
     PropertiesService: { getScriptProperties: () => ({
       getProperty: cle => props.get(cle) ?? null,
       setProperty: (cle, valeur) => props.set(cle, valeur),
@@ -161,7 +178,7 @@ quiz.createFile("Quiz_" + ancienId + ".json", JSON.stringify({
   id: ancienId, titre: "Ancien questionnaire", questions: [{}]
 }), "application/json");
 
-for (const action of ["preparerLot", "ajouterPhoto", "genererQuiz", "validerTitre", "renommerQuiz"]) {
+for (const action of ["preparerLot", "ajouterPhoto", "genererQuiz", "validerTitre", "renommerQuiz", "supprimerQuiz"]) {
   assert.equal(appeler(action, { lotId }).erreur, "SESSION_INVALIDE");
 }
 assert.equal(preparer(lotId, 9).erreur, "NOMBRE_PHOTOS");
@@ -249,6 +266,49 @@ assert(renommer(autreLot, "Fractions", "Autre cours archivé").quiz.archiveRenom
 assert.equal(archiveAncienne.nom, "Autre cours archivé");
 assert.equal(archive.nom, "Fractions faciles");
 assert.deepEqual(requetes.at(-1).contents[0].parts.slice(1).map(part => part.inline_data.data), [autreCours]);
+const supprimer = (id, titre) => appeler("supprimerQuiz", { jeton, id, titre });
+const titreFinal = "Fractions faciles";
+assert.equal(supprimer(lotId, "Ancien titre").erreur, "TITRE_MODIFIE");
+pannes.archiveCorbeille = true;
+assert.equal(supprimer(lotId, titreFinal).erreur, "SUPPRESSION_INTERROMPUE");
+pannes.archiveCorbeille = false;
+assert(!fichier.isTrashed() && !archive.isTrashed());
+pannes.fichierCorbeille = true;
+assert.equal(supprimer(lotId, titreFinal).erreur, "SUPPRESSION_INTERROMPUE");
+assert(!fichier.isTrashed() && !archive.isTrashed(), "L’archive est restaurée si le JSON n’a pas été déplacé");
+pannes.restaurerArchive = true;
+assert.equal(supprimer(lotId, titreFinal).erreur, "SUPPRESSION_A_REPRENDRE");
+assert(props.has("SUPPRESSION_" + lotId) && archive.isTrashed() && !fichier.isTrashed());
+assert.equal(renommer(lotId, titreFinal, "Autre").erreur, "SUPPRESSION_A_REPRENDRE");
+pannes.fichierCorbeille = pannes.restaurerArchive = false;
+pannes.apresFichierCorbeille = true;
+assert.equal(supprimer(lotId, titreFinal).archiveSupprimee, true);
+pannes.apresFichierCorbeille = false;
+assert(!props.has("SUPPRESSION_" + lotId));
+assert(fichier.isTrashed() && archive.isTrashed() && archive.fichiers.length === 2);
+assert(!lister().some(quiz => quiz.id === lotId));
+assert.equal(appeler("chargerQuiz", { jeton, id: lotId }).succes, false);
+assert(supprimer(lotId, titreFinal).dejaSupprime);
+fichier.setTrashed(false);
+archive.setTrashed(false);
+assert.equal(appeler("chargerQuiz", { jeton, id: lotId }).quiz.questions[0].correctes[0], 0);
+assert.equal(archive.fichiers.length, 2);
+
+assert.equal(supprimer(ancienId, "Ancien — nouveau titre").archiveSupprimee, false);
+assert(!archiveAncienne.isTrashed(), "Aucune archive n’est recherchée par titre");
+const idAncienNom = crypto.randomUUID();
+const fichierAncienNom = quiz.createFile("Ancien-export.json", JSON.stringify({
+  id: idAncienNom, titre: "Export historique", questions: [{}]
+}), "application/json");
+assert(supprimer(idAncienNom, "Export historique").succes && fichierAncienNom.isTrashed());
+const idArchiveExterne = crypto.randomUUID();
+const fichierArchiveExterne = quiz.createFile("Quiz_" + idArchiveExterne + ".json", JSON.stringify({
+  id: idArchiveExterne, titre: "Lien déplacé", questions: [{}], dossierArchiveId: entree.id
+}), "application/json");
+assert.equal(supprimer(idArchiveExterne, "Lien déplacé").erreur, "ARCHIVE_INTROUVABLE");
+assert(!fichierArchiveExterne.isTrashed() && !entree.isTrashed());
+console.log("OK — mise en corbeille, retour arrière, reprise et restauration");
+
 console.log("OK — sessions, limites, isolation, reprises, archivage et anciens questionnaires");
 
 async function testerInterface(kit = false) {
@@ -260,6 +320,7 @@ async function testerInterface(kit = false) {
   let coupeEnvoi = true;
   let coupeGeneration = true;
   let coupeValidation = true;
+  let coupeSuppression = true;
   let dernierLot;
   let appelSuspendu;
   const envoyees = [];
@@ -270,6 +331,7 @@ async function testerInterface(kit = false) {
     const elements = new Map();
     class Element {
       children = [];
+      dataset = {};
       files = [];
       h = "";
       hidden = false;
@@ -283,7 +345,8 @@ async function testerInterface(kit = false) {
       focus() {}
       set textContent(texte) { this.h = texte; this.children = []; }
       get textContent() { return this.h; }
-      appendChild(element) { this.children.push(element); }
+      appendChild(element) { element.parent = this; this.children.push(element); }
+      remove() { this.parent.children = this.parent.children.filter(element => element !== this); }
       replaceChildren() { this.children = []; }
       addEventListener(evenement, fonction) { this.listeners[evenement] = fonction; }
     }
@@ -302,7 +365,8 @@ async function testerInterface(kit = false) {
       const resultat = appeler(data.action, data);
       if (data.action === "ajouterPhoto" && coupeEnvoi ||
           data.action === "genererQuiz" && coupeGeneration ||
-          data.action === "validerTitre" && coupeValidation) {
+          data.action === "validerTitre" && coupeValidation ||
+          data.action === "supprimerQuiz" && coupeSuppression) {
         return new Promise(resolve => {
           appelSuspendu = { action: data.action, signal, terminer: () => resolve(resultat) };
         });
@@ -450,8 +514,33 @@ async function testerInterface(kit = false) {
   await soumettre("formRenommer");
   assert.match(page.lire("messageRenommage").textContent, /dossier d’archives renommés/);
   assert(lister().some(quiz => quiz.id === lotOriginal && quiz.titre === "Fractions, révision finale"));
+  const ligneRenommee = page.lire("listeQuiz").children.find(element => element.dataset.quizId === lotOriginal);
+  ligneRenommee.children[2].onclick();
+  assert.match(page.lire("confirmationSuppression").textContent, /Fractions, révision finale/);
+  const appelsAvantAnnulation = historiques.length;
+  page.lire("annulerSuppression").listeners.click();
+  assert.equal(historiques.length, appelsAvantAnnulation);
+  assert(page.lire("formSuppression").hidden);
+
+  ligneRenommee.children[2].onclick();
+  const clicSuppression = soumettre("formSuppression");
+  const suppression = await attendreAppel("supprimerQuiz");
+  page.navigator.onLine = false;
+  page.evenements.dispatchEvent(new Event("offline"));
+  await clicSuppression;
+  assert(!page.lire("formSuppression").hidden);
+  assert.match(page.lire("messageSuppression").textContent, /Connexion Internet interrompue/);
+  assert(page.lire("listeQuiz").children.some(element => element.dataset.quizId === lotOriginal));
+  coupeSuppression = false;
+  page.navigator.onLine = true;
+  await soumettre("formSuppression");
+  suppression.terminer();
+  assert(page.lire("formSuppression").hidden);
+  assert(!page.lire("listeQuiz").children.some(element => element.dataset.quizId === lotOriginal));
+  assert(!lister().some(quiz => quiz.id === lotOriginal));
+  assert(quiz.fichiers.filter(f => f.getName() === "Quiz_" + lotOriginal + ".json").length === 1);
   assert.equal(stockage.size, 1, "Seule la session reste après un succès");
-  console.log("OK — coupure, validation et renommage (" + (kit ? "kit Apps Script" : "fetch") + ")");
+  console.log("OK — coupure, validation, renommage et suppression (" + (kit ? "kit Apps Script" : "fetch") + ")");
 
 }
 
