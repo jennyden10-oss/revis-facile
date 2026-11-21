@@ -214,8 +214,8 @@ assert(generer(autreLot, autreJeton).succes);
 assert.deepEqual(requetes.at(-1).contents[0].parts.slice(1).map(part => part.inline_data.data), [autreCours]);
 console.log("OK — sessions, limites, isolation, reprises, archivage et anciens questionnaires");
 
-async function testerInterface() {
-  const html = fs.readFileSync(path.join(dossierProjet, "index.html"), "utf8");
+async function testerInterface(kit = false) {
+  const html = fs.readFileSync(path.join(dossierProjet, kit ? "kit-test/Index.html" : "index.html"), "utf8");
   const stockage = new Map();
   const fichiers = ["fractions-1", "fractions-2"].map(nom => new File(
     [Buffer.from(photo(nom), "base64")], nom + ".jpg", { type: "image/jpeg" }
@@ -223,6 +223,7 @@ async function testerInterface() {
   let coupeEnvoi = true;
   let coupeGeneration = true;
   let dernierLot;
+  let appelSuspendu;
   const envoyees = [];
   const historiques = [];
   const adresse = "https://script.google.com/macros/s/TEST/exec";
@@ -249,9 +250,33 @@ async function testerInterface() {
       elements.set(id, new Element());
     }
     const lire = id => elements.get(id);
+    const evenements = new EventTarget();
+    const timers = new Map();
+    const navigator = { onLine: true };
+    const traiterRequete = async (data, signal) => {
+      dernierLot = data.lotId || dernierLot;
+      historiques.push(data);
+      if (data.action === "ajouterPhoto") envoyees.push(data.indexPhoto);
+      const resultat = appeler(data.action, data);
+      if (data.action === "ajouterPhoto" && coupeEnvoi ||
+          data.action === "genererQuiz" && coupeGeneration) {
+        return new Promise(resolve => {
+          appelSuspendu = { action: data.action, signal, terminer: () => resolve(resultat) };
+        });
+      }
+      return resultat;
+    };
     const contexte = vm.createContext({
-      console, crypto, navigator: {}, addEventListener() {},
-      setTimeout: () => 1, clearTimeout() {}, TypeError,
+      console, crypto, AbortController, navigator,
+      location: { pathname: "/test" },
+      addEventListener: evenements.addEventListener.bind(evenements),
+      removeEventListener: evenements.removeEventListener.bind(evenements),
+      setTimeout: (callback, delai) => {
+        const id = Symbol();
+        timers.set(id, { callback, delai });
+        return id;
+      },
+      clearTimeout: id => timers.delete(id),
       document: {
         getElementById: lire,
         querySelector: () => ({ content: adresse }),
@@ -264,16 +289,22 @@ async function testerInterface() {
       },
       fetch: async (url, options) => {
         assert.equal(url, adresse);
-        const data = JSON.parse(options.body);
-        dernierLot = data.lotId || dernierLot;
-        historiques.push(data);
-        if (data.action === "ajouterPhoto") envoyees.push(data.indexPhoto);
-        const resultat = appeler(data.action, data);
-        if (data.action === "ajouterPhoto" && coupeEnvoi ||
-            data.action === "genererQuiz" && coupeGeneration) {
-          throw new TypeError("Coupure simulée après la réponse serveur");
-        }
+        const resultat = await traiterRequete(JSON.parse(options.body), options.signal);
         return { ok: true, json: async () => resultat };
+      },
+      google: {
+        script: {
+          get run() {
+            let succes, echec;
+            return {
+              withSuccessHandler(callback) { succes = callback; return this; },
+              withFailureHandler(callback) { echec = callback; return this; },
+              appelerTest(action, parametres) {
+                traiterRequete({ ...parametres, action }).then(succes, echec);
+              }
+            };
+          }
+        }
       }
     });
     contexte.window = contexte;
@@ -284,32 +315,58 @@ async function testerInterface() {
       convertirPhotoBase64 = async fichier => convertirTest(await fichier.arrayBuffer());
     `, contexte);
     contexte.convertirTest = buffer => Buffer.from(buffer).toString("base64");
-    return { lire, contexte };
+    return { lire, evenements, timers, navigator };
   }
   const sessionTest = appeler("connexion", { codeAcces: "code fictif" });
-  stockage.set("revisFacileSession:" + adresse, JSON.stringify({
+  stockage.set(kit ? "revisFacileTestConnexion:/test" : "revisFacileSession:" + adresse, JSON.stringify({
     jeton: sessionTest.jeton, expireA: sessionTest.expireA
   }));
+
+  async function attendreAppel(action) {
+    for (let tentative = 0; tentative < 100; tentative++) {
+      if (appelSuspendu?.action === action) return appelSuspendu;
+      await new Promise(setImmediate);
+    }
+    assert.fail("Appel jamais suspendu : " + action);
+  }
+
   let page = navigateur();
   page.lire("photosCours").files = fichiers;
   page.lire("photosCours").listeners.change();
   assert.match(page.lire("nombrePhotos").textContent, /^2 photos/);
-  await page.lire("genererQuestionnaire").listeners.click();
-  assert.match(page.lire("progressionLot").textContent, /interrompue/);
-  assert.deepEqual(envoyees, [0]);
-  coupeEnvoi = false;
-
-  page = navigateur();
-  await page.lire("genererQuestionnaire").listeners.click();
-  assert.match(page.lire("progressionLot").textContent, /Il manque des photos/);
-  page.lire("photosCours").files = [...fichiers].reverse();
-  await page.lire("genererQuestionnaire").listeners.click();
-  assert.match(page.lire("progressionLot").textContent, /même ordre/);
-  page.lire("photosCours").files = fichiers;
-  await page.lire("genererQuestionnaire").listeners.click();
-  assert.deepEqual(envoyees, [0, 1]);
-  assert.match(page.lire("progressionLot").textContent, /interrompue/);
+  const clicEnvoi = page.lire("genererQuestionnaire").listeners.click();
+  const envoi = await attendreAppel("ajouterPhoto");
+  assert(page.lire("genererQuestionnaire").disabled);
   const lotOriginal = dernierLot;
+
+  page.navigator.onLine = false;
+  page.evenements.dispatchEvent(new Event("offline"));
+  await clicEnvoi;
+  assert.match(page.lire("progressionLot").textContent, /Connexion Internet interrompue/);
+  assert.deepEqual(page.lire("photosCours").files, fichiers);
+  assert.equal(page.lire("genererQuestionnaire").textContent, "Réessayer");
+  assert.equal(page.lire("genererQuestionnaire").disabled, false);
+  if (!kit) assert(envoi.signal.aborted);
+
+  const nombreAppelsHorsLigne = historiques.length;
+  await page.lire("genererQuestionnaire").listeners.click();
+  assert.equal(historiques.length, nombreAppelsHorsLigne);
+  assert.deepEqual(envoyees, [0]);
+  envoi.terminer();
+
+  coupeEnvoi = false;
+  page.navigator.onLine = true;
+  const clicGeneration = page.lire("genererQuestionnaire").listeners.click();
+  const attente = await attendreAppel("genererQuiz");
+  assert.deepEqual(envoyees, [0, 1], "La photo déjà reçue est ignorée à la reprise.");
+  const minuterie = [...page.timers.values()].find(timer => timer.delai === 120000);
+  assert(minuterie);
+  minuterie.callback();
+  await clicGeneration;
+  if (!kit) assert(attente.signal.aborted);
+  assert.match(page.lire("progressionLot").textContent, /La réponse tarde/);
+  assert.deepEqual(page.lire("photosCours").files, fichiers);
+  assert.equal(page.lire("genererQuestionnaire").disabled, false);
   const requetesApresCreation = requetes.length;
 
   coupeGeneration = false;
@@ -317,14 +374,17 @@ async function testerInterface() {
   await page.lire("genererQuestionnaire").listeners.click();
   assert.equal(dernierLot, lotOriginal);
   assert.equal(requetes.length, requetesApresCreation);
+  attente.terminer();
+  await new Promise(setImmediate);
   assert.match(page.lire("progressionLot").textContent, /Questionnaire créé : Fractions/);
   assert.equal(page.lire("listeQuiz").children.at(-1).type, "button");
   assert.equal(historiques.at(-1).action, "listerQuiz");
   assert.equal(stockage.size, 1, "Seule la session reste après un succès");
-  console.log("OK — interface simulée, reprise après fermeture et actualisation de la liste");
+  console.log("OK — coupure, délai et même lot après reprise (" + (kit ? "kit Apps Script" : "fetch") + ")");
+
 }
 
-testerInterface().catch(erreur => {
+testerInterface().then(() => testerInterface(true)).catch(erreur => {
   console.error(erreur);
   process.exitCode = 1;
 });
