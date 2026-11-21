@@ -116,6 +116,7 @@
 <script>
 const CLE_SESSION = "revisFacileTestConnexion:" + location.pathname;
 let session = null;
+let ouvertureQuiz = 0;
 let minuterieExpiration;
 
 function appelerServeur(action, parametres) {
@@ -267,13 +268,15 @@ function convertirPhotoBase64(fichier) {
 }
 async function ouvrirQuestionnaire(id) {
   const message = document.getElementById("messageQuiz");
-  if (!id) return;
+  if (!id || !session) return;
+  const demande = ++ouvertureQuiz;
+  const sessionCourante = session;
 
   message.textContent = "Chargement en cours...";
 
   try {
-    const donnees = await appelerActionProtegee("chargerQuiz", { id });
-    if (!donnees) return;
+    const donnees = await appelerAvecDelai("chargerQuiz", { id });
+    if (!donnees || demande !== ouvertureQuiz) return;
 
     if (donnees.succes && donnees.quiz) {
       message.textContent = "Questionnaire chargé : " + donnees.quiz.titre;
@@ -283,11 +286,12 @@ async function ouvrirQuestionnaire(id) {
       scoreQuiz = 0;
       afficherQuestionQuiz();
     } else {
-      message.textContent = "Accès refusé ou questionnaire introuvable.";
+      message.textContent = MESSAGES_LOT[donnees.erreur] || "Accès refusé ou questionnaire introuvable.";
     }
   } catch (erreur) {
-    message.textContent = "Erreur de connexion.";
-    console.error(erreur);
+    if (session === sessionCourante && demande === ouvertureQuiz) {
+      message.textContent = erreur.message;
+    }
   }
 }
 </script>
@@ -352,7 +356,9 @@ function afficherQuestionQuiz() {
   zone.replaceChildren();
   document.getElementById("correctionQuiz").replaceChildren();
 
-  document.getElementById("boutonQuiz").textContent = "Vérifier";
+  const boutonQuiz = document.getElementById("boutonQuiz");
+  boutonQuiz.disabled = false;
+  boutonQuiz.textContent = "Vérifier";
 
   if (["qcm", "multiple", "vrai_faux"].includes(q.type)) {
     q.choix.forEach((choix, i) => {
@@ -394,7 +400,7 @@ function afficherQuestionQuiz() {
 }
 
 async function verifierAvecGeminiQuiz(reponseEleve) {
-  const donnees = await appelerActionProtegee("verifierReponse", {
+  const donnees = await appelerAvecDelai("verifierReponse", {
     id: window.idSessionQuiz,
     index: positionQuiz,
     reponse: reponseEleve
@@ -403,7 +409,7 @@ async function verifierAvecGeminiQuiz(reponseEleve) {
   if (!donnees) return null;
   if (!donnees.succes ||
       typeof donnees.correcte !== "boolean") {
-    throw new Error("Vérification indisponible.");
+    throw new Error("Vérification indisponible. Appuie sur Vérifier pour réessayer.");
   }
 
   return donnees.correcte;
@@ -459,17 +465,16 @@ if (!juste) {
     juste = await verifierAvecGeminiQuiz(champ.value);
     if (juste === null || window.quizEnCours !== quiz) return;
   } catch (erreur) {
-    console.error("Correction indisponible :", erreur);
-
-    const correction = document.getElementById("correctionQuiz");
-    correction.textContent =
-      "Impossible de vérifier cette formulation pour le moment. " +
-      "Ta réponse n'est pas comptée comme fausse. Réessaie.";
-
+    if (window.quizEnCours === quiz) {
+      document.getElementById("correctionQuiz").textContent =
+        erreur.message + " Ta réponse n’est pas comptée comme fausse.";
+    }
     return;
   } finally {
-    bouton.disabled = false;
-    bouton.textContent = ancienTexte;
+    if (window.quizEnCours === quiz) {
+      bouton.disabled = false;
+      bouton.textContent = ancienTexte;
+    }
   }
 }
 
@@ -481,6 +486,7 @@ champ.disabled = true;
   if (juste) scoreQuiz++;
 
   const correction = document.getElementById("correctionQuiz");
+  correction.replaceChildren();
   const titre = document.createElement("p");
   titre.textContent = juste
     ? "✓ Bonne réponse !" : "✗ Pas tout à fait.";
@@ -644,7 +650,11 @@ async function appelerAvecDelai(action, parametres) {
   const commande = action === "validerTitre" ? "Enregistrer le questionnaire"
     : action === "renommerQuiz" ? "Enregistrer"
     : action === "supprimerQuiz" ? "Mettre à la corbeille" : "Réessayer";
-  const consigne = " Vérifie ta connexion, puis appuie sur " + commande + ".";
+  const consigne = action === "chargerQuiz"
+    ? " Vérifie ta connexion, puis appuie de nouveau sur le questionnaire."
+    : action === "verifierReponse"
+      ? " Vérifie ta connexion, puis appuie de nouveau sur Vérifier."
+      : " Vérifie ta connexion, puis appuie sur " + commande + ".";
   const messageHorsLigne = "Connexion Internet interrompue." + consigne;
   if (navigator.onLine === false) throw new Error(messageHorsLigne);
 

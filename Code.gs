@@ -250,18 +250,11 @@ function verifierQuiz_(quiz) {
 }
 
 function chargerQuiz_(id) {
-  if (!/^[a-f0-9-]{36}$/i.test(id || "")) {
-    throw new Error("Identifiant invalide.");
-  }
-
-  const dossier = DriveApp.getFolderById(
-    PropertiesService.getScriptProperties()
-      .getProperty("DOSSIER_QUIZ")
-  );
-
-  const fichier = fichierActif_(dossier, "Quiz_" + id + ".json");
-  if (!fichier) throw new Error("Questionnaire introuvable.");
-  return lireQuizFichier_(fichier);
+  const props = PropertiesService.getScriptProperties();
+  const dossier = dossierLotConfigure_(props, "DOSSIER_QUIZ");
+  const resultat = trouverQuiz_(dossier, id);
+  if (!resultat) throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
+  return resultat.quiz;
 }
 
 function doGet(e) {
@@ -905,14 +898,11 @@ function validerTitreLot_(donnees) {
 
 function renommerQuiz_(donnees) {
   const titre = titreQuizValide_(donnees.titre);
-  if (typeof donnees.id !== "string" || !/^[a-f0-9-]{36}$/i.test(donnees.id)) {
-    throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
-  }
   return avecVerrouSessions_(props => {
     const dossierQuiz = dossierLotConfigure_(props, "DOSSIER_QUIZ");
-    const fichier = fichierActif_(dossierQuiz, "Quiz_" + donnees.id + ".json");
-    if (!fichier) throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
-    const quiz = lireQuizFichier_(fichier);
+    const resultat = trouverQuiz_(dossierQuiz, donnees.id);
+    if (!resultat) throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
+    const { fichier, quiz } = resultat;
     if (quiz.titre !== donnees.titreActuel && quiz.titre !== titre) {
       throw erreurLot_("TITRE_MODIFIE");
     }
@@ -968,7 +958,7 @@ function archiveLieeQuiz_(props, quiz) {
 
 function supprimerQuiz_(donnees) {
   const id = donnees.id;
-  if (typeof id !== "string" || !/^[a-f0-9-]{36}$/i.test(id)) {
+  if (typeof id !== "string" || !id) {
     throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
   }
   return avecVerrouSessions_(props => {
@@ -981,11 +971,11 @@ function supprimerQuiz_(donnees) {
       archive = operation.archiveId ? DriveApp.getFolderById(operation.archiveId) : null;
     } else {
       const dossierQuiz = dossierLotConfigure_(props, "DOSSIER_QUIZ");
-      fichier = fichierQuizPourSuppression_(dossierQuiz, id);
+      const resultat = trouverQuiz_(dossierQuiz, id);
       // Une réponse réseau perdue peut conduire à rejouer une suppression déjà terminée.
-      if (!fichier) return { dejaSupprime: true };
-      const quiz = lireQuizFichier_(fichier);
-      if (quiz.id !== id) throw erreurLot_("QUESTIONNAIRE_INTROUVABLE");
+      if (!resultat) return { dejaSupprime: true };
+      fichier = resultat.fichier;
+      const quiz = resultat.quiz;
       if (quiz.titre !== donnees.titre) throw erreurLot_("TITRE_MODIFIE");
       archive = archiveLieeQuiz_(props, quiz);
       operation = {
@@ -1025,25 +1015,37 @@ function supprimerQuiz_(donnees) {
   });
 }
 
-function fichierQuizPourSuppression_(dossier, id) {
-  const canonique = fichierActif_(dossier, "Quiz_" + id + ".json");
-  if (canonique) return canonique;
+function trouverQuiz_(dossier, id) {
+  if (typeof id !== "string" || !id) return null;
 
-  // La liste historique accepte aussi des fichiers JSON portant un autre nom.
+  const canonique = fichierActif_(dossier, "Quiz_" + id + ".json");
+  if (canonique) {
+    const quiz = lireQuizCorrespondant_(canonique, id);
+    if (quiz) return { fichier: canonique, quiz };
+  }
+
+  // Un export historique peut avoir un autre nom. Son identifiant reste dans le JSON.
   let resultat = null;
   const fichiers = dossier.getFiles();
   while (fichiers.hasNext()) {
     const fichier = fichiers.next();
     if (fichier.isTrashed() || !fichier.getName().toLowerCase().endsWith(".json")) continue;
-    let quiz;
-    try {
-      quiz = lireQuizFichier_(fichier);
-    } catch {
-      continue;
-    }
-    if (quiz?.id !== id || !Array.isArray(quiz.questions)) continue;
+    const quiz = lireQuizCorrespondant_(fichier, id);
+    if (!quiz) continue;
     if (resultat) throw erreurLot_("QUESTIONNAIRE_AMBIGU");
-    resultat = fichier;
+    resultat = { fichier, quiz };
   }
   return resultat;
+}
+
+function lireQuizCorrespondant_(fichier, id) {
+  let quiz;
+  try {
+    quiz = lireQuizFichier_(fichier);
+  } catch (erreur) {
+    if (erreur instanceof SyntaxError) return null;
+    throw erreur;
+  }
+  return quiz?.id === id && typeof quiz.titre === "string" && Array.isArray(quiz.questions)
+    ? quiz : null;
 }

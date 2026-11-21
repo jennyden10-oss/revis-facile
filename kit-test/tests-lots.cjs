@@ -123,8 +123,10 @@ function environnement() {
       base64Decode: texte => Buffer.from(texte, "base64"),
       getUuid: () => crypto.randomUUID(),
       newBlob: creerBlob,
+      formatDate: () => "heure-fictive",
       sleep() {}
     },
+    CacheService: { getScriptCache: () => ({ get: () => null, put() {} }) },
     ContentService: {
       createTextOutput: contenu => ({ setMimeType() { return this; }, getContent: () => contenu }),
       MimeType: { JSON: "json" }
@@ -132,13 +134,17 @@ function environnement() {
     UrlFetchApp: {
       fetch: (_url, options) => {
         assert(!verrouille, "Les autres sessions restent utilisables pendant Gemini");
-        requetes.push(JSON.parse(options.payload));
-        pendantGemini();
+        const requete = JSON.parse(options.payload);
+        const correction = requete.generationConfig.maxOutputTokens === 256;
+        if (!correction) {
+          requetes.push(requete);
+          pendantGemini();
+        }
         if (pannes.gemini) throw new Error("Gemini indisponible");
         return {
           getResponseCode: () => 200,
           getContentText: () => JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(quizGemini) }] } }]
+            candidates: [{ content: { parts: [{ text: JSON.stringify(correction ? { correcte: true } : quizGemini) }] } }]
           })
         };
       }
@@ -296,11 +302,31 @@ assert.equal(archive.fichiers.length, 2);
 
 assert.equal(supprimer(ancienId, "Ancien — nouveau titre").archiveSupprimee, false);
 assert(!archiveAncienne.isTrashed(), "Aucune archive n’est recherchée par titre");
-const idAncienNom = crypto.randomUUID();
-const fichierAncienNom = quiz.createFile("Ancien-export.json", JSON.stringify({
-  id: idAncienNom, titre: "Export historique", questions: [{}]
-}), "application/json");
-assert(supprimer(idAncienNom, "Export historique").succes && fichierAncienNom.isTrashed());
+const idAncienNom = "export-historique";
+const nomAncien = "Ancien-export.JSON";
+const ancienContenu = {
+  id: idAncienNom, titre: "Export historique",
+  questions: [{ type: "court", question: "Combien vaut un demi ?", reponsesAcceptees: ["0,5"], explication: "Un demi vaut 0,5." }],
+  source: { chapitre: "Fractions" }
+};
+quiz.createFile("Fichier-illisible.json", "{", "application/json");
+const fichierAncienNom = quiz.createFile(nomAncien, JSON.stringify(ancienContenu), "application/json");
+const ouvrirAncien = () => appeler("chargerQuiz", { jeton, id: idAncienNom });
+assert.deepEqual(ouvrirAncien().quiz, ancienContenu);
+assert(lister().some(quiz => quiz.id === idAncienNom));
+const doublonAncien = quiz.createFile("Autre-export.json", JSON.stringify(ancienContenu), "application/json");
+assert.equal(ouvrirAncien().erreur, "QUESTIONNAIRE_AMBIGU");
+assert.equal(renommer(idAncienNom, ancienContenu.titre, "Titre modifié").erreur, "QUESTIONNAIRE_AMBIGU");
+assert.equal(supprimer(idAncienNom, ancienContenu.titre).erreur, "QUESTIONNAIRE_AMBIGU");
+assert(!fichierAncienNom.isTrashed() && !doublonAncien.isTrashed());
+doublonAncien.setTrashed(true);
+const titreLegacy = "Export renommé";
+assert(renommer(idAncienNom, ancienContenu.titre, titreLegacy).succes);
+assert.equal(fichierAncienNom.getName(), nomAncien);
+assert.deepEqual(ouvrirAncien().quiz, { ...ancienContenu, titre: titreLegacy });
+assert(supprimer(idAncienNom, titreLegacy).succes && fichierAncienNom.isTrashed());
+assert.equal(ouvrirAncien().erreur, "QUESTIONNAIRE_INTROUVABLE");
+fichierAncienNom.setTrashed(false);
 const idArchiveExterne = crypto.randomUUID();
 const fichierArchiveExterne = quiz.createFile("Quiz_" + idArchiveExterne + ".json", JSON.stringify({
   id: idArchiveExterne, titre: "Lien déplacé", questions: [{}], dossierArchiveId: entree.id
@@ -321,6 +347,8 @@ async function testerInterface(kit = false) {
   let coupeGeneration = true;
   let coupeValidation = true;
   let coupeSuppression = true;
+  let ouvrirSansReponse = true;
+  let corrigerSansReponse = true;
   let dernierLot;
   let appelSuspendu;
   const envoyees = [];
@@ -329,6 +357,7 @@ async function testerInterface(kit = false) {
 
   function navigateur() {
     const elements = new Map();
+    let champEcrit;
     class Element {
       children = [];
       dataset = {};
@@ -354,7 +383,7 @@ async function testerInterface(kit = false) {
       assert(!elements.has(id));
       elements.set(id, new Element());
     }
-    const lire = id => elements.get(id);
+    const lire = id => id === "reponseEcriteQuiz" ? champEcrit : elements.get(id);
     const evenements = new EventTarget();
     const timers = new Map();
     const navigator = { onLine: true };
@@ -366,7 +395,9 @@ async function testerInterface(kit = false) {
       if (data.action === "ajouterPhoto" && coupeEnvoi ||
           data.action === "genererQuiz" && coupeGeneration ||
           data.action === "validerTitre" && coupeValidation ||
-          data.action === "supprimerQuiz" && coupeSuppression) {
+          data.action === "supprimerQuiz" && coupeSuppression ||
+          data.action === "chargerQuiz" && ouvrirSansReponse ||
+          data.action === "verifierReponse" && corrigerSansReponse) {
         return new Promise(resolve => {
           appelSuspendu = { action: data.action, signal, terminer: () => resolve(resultat) };
         });
@@ -387,7 +418,11 @@ async function testerInterface(kit = false) {
       document: {
         getElementById: lire,
         querySelector: () => ({ content: adresse }),
-        createElement: () => new Element()
+        createElement: type => {
+          const element = new Element();
+          if (type === "input") champEcrit = element;
+          return element;
+        }
       },
       localStorage: {
         getItem: cle => stockage.get(cle) ?? null,
@@ -422,7 +457,7 @@ async function testerInterface(kit = false) {
       convertirPhotoBase64 = async fichier => convertirTest(await fichier.arrayBuffer());
     `, contexte);
     contexte.convertirTest = buffer => Buffer.from(buffer).toString("base64");
-    return { lire, evenements, timers, navigator };
+    return { lire, evenements, timers, navigator, contexte };
   }
   const sessionTest = appeler("connexion", { codeAcces: "code fictif" });
   stockage.set(kit ? "revisFacileTestConnexion:/test" : "revisFacileSession:" + adresse, JSON.stringify({
@@ -539,6 +574,44 @@ async function testerInterface(kit = false) {
   assert(!page.lire("listeQuiz").children.some(element => element.dataset.quizId === lotOriginal));
   assert(!lister().some(quiz => quiz.id === lotOriginal));
   assert(quiz.fichiers.filter(f => f.getName() === "Quiz_" + lotOriginal + ".json").length === 1);
+  const ligneHistorique = page.lire("listeQuiz").children.find(element => element.dataset.quizId === idAncienNom);
+  const ouvrir = () => ligneHistorique.children[0].onclick();
+  const corriger = () => page.contexte.actionQuiz();
+  const ouverture = ouvrir();
+  const ouvertureEnAttente = await attendreAppel("chargerQuiz");
+  const expirerRequete = () => {
+    const timer = [...page.timers.values()].find(item => item.delai === 30000);
+    assert(timer, "Une requête de révision doit avoir un délai");
+    timer.callback();
+  };
+  expirerRequete();
+  await ouverture;
+  assert.match(page.lire("messageQuiz").textContent, /appuie de nouveau sur le questionnaire/);
+  if (!kit) assert(ouvertureEnAttente.signal.aborted);
+  ouvrirSansReponse = false;
+  await ouvrir();
+  ouvertureEnAttente.terminer();
+  assert.equal(page.lire("titreQuiz").textContent, titreLegacy);
+
+  page.lire("reponseEcriteQuiz").value = "la moitié";
+  const correction = corriger();
+  const correctionEnAttente = await attendreAppel("verifierReponse");
+  assert(page.lire("boutonQuiz").disabled);
+  expirerRequete();
+  await correction;
+  assert.equal(page.lire("boutonQuiz").disabled, false);
+  assert.equal(page.lire("reponseEcriteQuiz").value, "la moitié");
+  assert.match(page.lire("correctionQuiz").textContent, /Appuie|appuie/);
+  assert.match(page.lire("correctionQuiz").textContent, /pas comptée comme fausse/);
+  if (!kit) assert(correctionEnAttente.signal.aborted);
+  corrigerSansReponse = false;
+  await corriger();
+  correctionEnAttente.terminer();
+  await new Promise(setImmediate);
+  assert.equal(page.lire("correctionQuiz").children[0].textContent, "✓ Bonne réponse !");
+  await corriger();
+  assert.equal(page.lire("scoreFinalQuiz").textContent, "1 / 1");
+  console.log("OK — délai et reprise de la révision (" + (kit ? "kit Apps Script" : "fetch") + ")");
   assert.equal(stockage.size, 1, "Seule la session reste après un succès");
   console.log("OK — coupure, validation, renommage et suppression (" + (kit ? "kit Apps Script" : "fetch") + ")");
 
