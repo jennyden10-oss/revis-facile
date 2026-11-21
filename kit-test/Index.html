@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+
+
+<meta name="theme-color" content="#4169e1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+  <title>Révis'Facile</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f2f5ff;
+      text-align: center;
+      padding: 40px 20px;
+    }
+    h1 { color: #4455aa; }
+    .deconnexion {
+      background: transparent;
+      border: 0;
+      color: #4455aa;
+      padding: 10px;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    #codeFamilial {
+      box-sizing: border-box;
+      display: block;
+      width: 100%;
+      margin: 8px 0 12px;
+      padding: 10px;
+    }
+    .carte {
+      background: white;
+      border-radius: 16px;
+      padding: 30px;
+      max-width: 450px;
+      margin: 30px auto;
+      box-shadow: 0 3px 12px #ddd;
+    }
+  </style>
+</head>
+<body>
+  <h1>Révis'Facile · Test de connexion</h1>
+
+<section class="carte" id="connexion" aria-labelledby="titreConnexion">
+  <h2 id="titreConnexion">Connexion familiale</h2>
+  <form id="formConnexion">
+    <label for="codeFamilial">Code familial</label>
+    <input id="codeFamilial" type="password" autocomplete="off" required>
+    <button id="boutonConnexion" type="submit">Se connecter</button>
+  </form>
+  <p id="messageConnexion" role="status"></p>
+</section>
+
+<main id="espaceRevision" hidden>
+  <button id="boutonDeconnexion" type="button" class="deconnexion">
+    Se déconnecter
+  </button>
+  <p id="messageSession" role="status"></p>
+
+<div class="carte">
+  <h2>📚 Ouvrir un questionnaire</h2>
+  <button type="button" onclick="afficherListeQuiz()">
+    📚 Mes questionnaires
+  </button>
+
+  <div id="listeQuiz" aria-live="polite"></div>
+  <p id="messageQuiz"></p>
+</div>
+
+<input id="photosCours" type="file" hidden>
+<p id="nombrePhotos" hidden></p>
+
+<script>
+const CLE_SESSION = "revisFacileTestConnexion:" + location.pathname;
+let session = null;
+let minuterieExpiration;
+
+function appelerServeur(action, parametres) {
+  return new Promise((resolve, reject) => {
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)
+      .appelerTest(action, parametres);
+  });
+}
+
+function sessionAuBonFormat(valeur) {
+  return valeur && typeof valeur.jeton === "string" &&
+    /^[A-Za-z0-9_-]{43}$/.test(valeur.jeton) &&
+    Number.isFinite(valeur.expireA) && valeur.expireA > Date.now();
+}
+
+function terminerSession(message = "", effacerStockage = true) {
+  clearTimeout(minuterieExpiration);
+  session = null;
+  try {
+    if (effacerStockage) localStorage.removeItem(CLE_SESSION);
+  } catch {
+    // Le stockage peut être désactivé par le navigateur.
+  }
+  document.getElementById("espaceRevision").hidden = true;
+  document.getElementById("zoneQuiz").hidden = true;
+  for (const id of ["listeQuiz", "reponsesQuiz", "correctionQuiz"]) {
+    document.getElementById(id).replaceChildren();
+  }
+  for (const id of ["titreQuiz", "questionQuiz", "progressionQuiz", "scoreFinalQuiz"]) {
+    document.getElementById(id).textContent = "";
+  }
+  document.getElementById("messageQuiz").textContent = "";
+  document.getElementById("messageSession").textContent = "";
+  document.getElementById("photosCours").value = "";
+  document.getElementById("nombrePhotos").textContent = "Aucune photo sélectionnée.";
+  window.quizEnCours = null;
+  window.idSessionQuiz = null;
+  document.getElementById("connexion").hidden = false;
+  document.getElementById("messageConnexion").textContent = message;
+}
+
+function surveillerExpiration() {
+  if (!session) return;
+  const restant = session.expireA - Date.now();
+  if (restant <= 0) {
+    terminerSession("Ta session a expiré. Saisis le code familial.");
+    return;
+  }
+  minuterieExpiration = setTimeout(surveillerExpiration, Math.min(restant, 2147483647));
+}
+
+function ouvrirSession(valeur) {
+  session = { jeton: valeur.jeton, expireA: valeur.expireA };
+  document.getElementById("connexion").hidden = true;
+  document.getElementById("espaceRevision").hidden = false;
+  surveillerExpiration();
+  return afficherListeQuiz();
+}
+
+async function appelerActionProtegee(action, parametres = {}) {
+  const sessionCourante = session;
+  if (!sessionCourante) return null;
+  const donnees = await appelerServeur(action, { ...parametres, jeton: sessionCourante.jeton });
+  if (session !== sessionCourante) return null;
+  if (donnees.erreur === "SESSION_INVALIDE") {
+    terminerSession("Reconnecte-toi avec le code familial.");
+    return null;
+  }
+  return donnees;
+}
+
+async function afficherListeQuiz() {
+  const zone = document.getElementById("listeQuiz");
+
+  zone.textContent = "Recherche des questionnaires...";
+
+  try {
+    const donnees = await appelerActionProtegee("listerQuiz");
+    if (!donnees) return;
+
+    if (!donnees.succes || !Array.isArray(donnees.questionnaires)) {
+      zone.textContent = "Impossible de récupérer les questionnaires.";
+      return;
+    }
+
+    zone.replaceChildren();
+
+    if (donnees.questionnaires.length === 0) {
+      zone.textContent = "Aucun questionnaire disponible.";
+      return;
+    }
+
+    donnees.questionnaires.forEach(quiz => {
+      const bouton = document.createElement("button");
+
+      bouton.type = "button";
+      bouton.textContent = "📖 " + quiz.titre;
+      bouton.style.display = "block";
+      bouton.style.margin = "10px 0";
+      bouton.style.padding = "12px";
+      bouton.style.width = "100%";
+
+      bouton.onclick = () => ouvrirQuestionnaire(quiz.id);
+
+      zone.appendChild(bouton);
+    });
+
+  } catch (erreur) {
+    console.error(erreur);
+    zone.textContent = "Erreur de connexion.";
+  }
+}
+async function ouvrirQuestionnaire(id) {
+  const message = document.getElementById("messageQuiz");
+  if (!id) return;
+
+  message.textContent = "Chargement en cours...";
+
+  try {
+    const donnees = await appelerActionProtegee("chargerQuiz", { id });
+    if (!donnees) return;
+
+    if (donnees.succes && donnees.quiz) {
+      message.textContent = "Questionnaire chargé : " + donnees.quiz.titre;
+      window.quizEnCours = donnees.quiz;
+      window.idSessionQuiz = id;
+      positionQuiz = 0;
+      scoreQuiz = 0;
+      afficherQuestionQuiz();
+    } else {
+      message.textContent = "Accès refusé ou questionnaire introuvable.";
+    }
+  } catch (erreur) {
+    message.textContent = "Erreur de connexion.";
+    console.error(erreur);
+  }
+}
+</script>
+
+<div class="carte" id="zoneQuiz" hidden>
+  <div id="contenuQuiz">
+    <h2 id="titreQuiz"></h2>
+    <p id="progressionQuiz"></p>
+    <h3 id="questionQuiz"></h3>
+
+    <div id="reponsesQuiz"></div>
+    <div id="correctionQuiz" aria-live="polite"></div>
+
+    <button id="boutonQuiz" onclick="actionQuiz()">
+      Vérifier
+    </button>
+  </div>
+
+  <div id="resultatQuiz" aria-live="polite" hidden>
+    <h2>🎉 Entraînement terminé !</h2>
+    <p id="scoreFinalQuiz"></p>
+  </div>
+</div>
+
+<script>
+let positionQuiz = 0;
+let scoreQuiz = 0;
+let choixQuiz = [];
+let reponseValidee = false;
+
+
+function texteNormalise(texte) {
+  return String(texte)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("fr")
+    .replace(/[’']/g, " ")
+    .replace(/[.,;:!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+
+function afficherQuestionQuiz() {
+  const quiz = window.quizEnCours;
+  if (!quiz || !quiz.questions) return;
+
+  const q = quiz.questions[positionQuiz];
+  choixQuiz = [];
+  reponseValidee = false;
+
+  document.getElementById("zoneQuiz").hidden = false;
+  document.getElementById("contenuQuiz").hidden = false;
+  document.getElementById("resultatQuiz").hidden = true;
+  document.getElementById("titreQuiz").textContent = quiz.titre;
+  document.getElementById("progressionQuiz").textContent =
+    "Question " + (positionQuiz + 1) +
+    " sur " + quiz.questions.length;
+  document.getElementById("questionQuiz").textContent = q.question;
+
+  const zone = document.getElementById("reponsesQuiz");
+  zone.replaceChildren();
+  document.getElementById("correctionQuiz").replaceChildren();
+
+  document.getElementById("boutonQuiz").textContent = "Vérifier";
+
+  if (["qcm", "multiple", "vrai_faux"].includes(q.type)) {
+    q.choix.forEach((choix, i) => {
+      const bouton = document.createElement("button");
+      bouton.textContent = choix;
+      bouton.style.display = "block";
+      bouton.style.margin = "10px 0";
+      bouton.style.padding = "12px";
+      bouton.style.width = "100%";
+
+      bouton.onclick = () => {
+        if (reponseValidee) return;
+
+        if (q.type === "multiple") {
+          choixQuiz = choixQuiz.includes(i)
+            ? choixQuiz.filter(n => n !== i)
+            : [...choixQuiz, i];
+        } else {
+          choixQuiz = [i];
+        }
+
+        zone.querySelectorAll("button").forEach((b, j) => {
+          b.style.background = choixQuiz.includes(j)
+            ? "#dce6ff" : "white";
+        });
+      };
+
+      zone.appendChild(bouton);
+    });
+  } else {
+    const champ = document.createElement("input");
+    champ.type = "text";
+    champ.id = "reponseEcriteQuiz";
+    champ.placeholder = "Ta réponse…";
+    champ.style.width = "100%";
+    champ.style.padding = "12px";
+    zone.appendChild(champ);
+  }
+}
+
+async function verifierAvecGeminiQuiz(reponseEleve) {
+  const donnees = await appelerActionProtegee("verifierReponse", {
+    id: window.idSessionQuiz,
+    index: positionQuiz,
+    reponse: reponseEleve
+  });
+
+  if (!donnees) return null;
+  if (!donnees.succes ||
+      typeof donnees.correcte !== "boolean") {
+    throw new Error("Vérification indisponible.");
+  }
+
+  return donnees.correcte;
+}
+
+async function actionQuiz() {
+  const quiz = window.quizEnCours;
+  const q = quiz.questions[positionQuiz];
+
+  if (reponseValidee) {
+    positionQuiz++;
+
+    if (positionQuiz >= quiz.questions.length) {
+      document.getElementById("scoreFinalQuiz").textContent =
+        scoreQuiz + " / " + quiz.questions.length;
+      document.getElementById("contenuQuiz").hidden = true;
+      document.getElementById("resultatQuiz").hidden = false;
+    } else {
+      afficherQuestionQuiz();
+    }
+    return;
+  }
+
+  let juste = false;
+  let attendu = "";
+
+  if (["qcm", "multiple", "vrai_faux"].includes(q.type)) {
+    if (!choixQuiz.length) return;
+
+    juste = choixQuiz.length === q.correctes.length &&
+      q.correctes.every(n => choixQuiz.includes(n));
+
+    attendu = q.correctes.map(n => q.choix[n]).join(", ");
+  } else {
+    const champ = document.getElementById("reponseEcriteQuiz");
+    if (!champ.value.trim()) return;
+
+
+juste = q.reponsesAcceptees.some(
+  r => texteNormalise(r) === texteNormalise(champ.value)
+);
+
+attendu = q.reponsesAcceptees[0];
+
+if (!juste) {
+  const bouton = document.getElementById("boutonQuiz");
+  const ancienTexte = bouton.textContent;
+
+  bouton.disabled = true;
+  bouton.textContent = "Vérification en cours…";
+
+  try {
+    juste = await verifierAvecGeminiQuiz(champ.value);
+    if (juste === null || window.quizEnCours !== quiz) return;
+  } catch (erreur) {
+    console.error("Correction indisponible :", erreur);
+
+    const correction = document.getElementById("correctionQuiz");
+    correction.textContent =
+      "Impossible de vérifier cette formulation pour le moment. " +
+      "Ta réponse n'est pas comptée comme fausse. Réessaie.";
+
+    return;
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = ancienTexte;
+  }
+}
+
+champ.disabled = true;
+
+  }
+
+  reponseValidee = true;
+  if (juste) scoreQuiz++;
+
+  const correction = document.getElementById("correctionQuiz");
+  const titre = document.createElement("p");
+  titre.textContent = juste
+    ? "✓ Bonne réponse !" : "✗ Pas tout à fait.";
+  correction.appendChild(titre);
+
+  if (!juste) {
+    const p = document.createElement("p");
+    p.textContent = "Bonne réponse : " + attendu;
+    correction.appendChild(p);
+  }
+
+  const explication = document.createElement("p");
+  explication.textContent = q.explication;
+  correction.appendChild(explication);
+
+  document.getElementById("boutonQuiz").textContent =
+    positionQuiz + 1 === quiz.questions.length
+      ? "Voir mon résultat" : "Continuer";
+}
+</script>
+
+</main>
+
+<script>
+const champCode = document.getElementById("codeFamilial");
+const boutonConnexion = document.getElementById("boutonConnexion");
+const boutonDeconnexion = document.getElementById("boutonDeconnexion");
+const messageConnexion = document.getElementById("messageConnexion");
+
+document.getElementById("formConnexion").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (boutonConnexion.disabled || !champCode.value) return;
+  boutonConnexion.disabled = true;
+  messageConnexion.textContent = "Connexion en cours…";
+  try {
+    const codeAcces = champCode.value;
+    champCode.value = "";
+    const donnees = await appelerServeur("connexion", { codeAcces });
+    if (!donnees.succes || !sessionAuBonFormat(donnees)) {
+      messageConnexion.textContent = {
+        CODE_INCORRECT: "Code familial incorrect.",
+        TROP_DE_TENTATIVES: "Trop de tentatives. Réessaie dans 15 minutes."
+      }[donnees.erreur] || "Connexion indisponible.";
+      return;
+    }
+    try {
+      localStorage.setItem(CLE_SESSION, JSON.stringify({
+        jeton: donnees.jeton,
+        expireA: donnees.expireA
+      }));
+    } catch {
+      document.getElementById("messageSession").textContent =
+        "Ce navigateur ne peut pas mémoriser la connexion.";
+    }
+    await ouvrirSession(donnees);
+  } catch (erreur) {
+    messageConnexion.textContent = erreur.message === "Adresse Apps Script de test à configurer."
+      ? erreur.message : "Connexion indisponible. Réessaie.";
+  } finally {
+    boutonConnexion.disabled = false;
+  }
+});
+
+boutonDeconnexion.addEventListener("click", async () => {
+  if (!session || boutonDeconnexion.disabled) return;
+  const sessionCourante = session;
+  boutonDeconnexion.disabled = true;
+  const message = document.getElementById("messageSession");
+  message.textContent = "Déconnexion en cours…";
+  try {
+    const donnees = await appelerServeur("deconnexion", { jeton: sessionCourante.jeton });
+    if (!donnees.succes) throw new Error("Révocation indisponible.");
+    if (session === sessionCourante) terminerSession("Tu es déconnectée.");
+  } catch {
+    if (session === sessionCourante) {
+      message.textContent = "Déconnexion non confirmée. Réessaie.";
+    }
+  } finally {
+    boutonDeconnexion.disabled = false;
+  }
+});
+
+window.addEventListener("storage", event => {
+  if ((event.key === CLE_SESSION || event.key === null) && session &&
+      event.newValue !== JSON.stringify(session)) {
+    terminerSession("La session a changé dans un autre onglet.", false);
+  }
+});
+
+try {
+  const memorisee = JSON.parse(localStorage.getItem(CLE_SESSION));
+  if (sessionAuBonFormat(memorisee)) {
+    ouvrirSession(memorisee);
+  } else if (memorisee) {
+    terminerSession("Ta session a expiré. Saisis le code familial.");
+  }
+} catch {
+  terminerSession();
+}
+</script>
+
+</body>
+</html>

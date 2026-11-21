@@ -747,9 +747,15 @@ function connecterFamille_(codeSaisi) {
       throw new Error("Compteur de sessions invalide.");
     }
     props.setProperty("SESSION_COMPTEUR", String(compteur));
-    const jeton = signatureSession_("jeton:" + compteur, secret);
+    const jeton = signatureSession_(
+      "jeton:" + compteur + ":" + Utilities.getUuid(), secret
+    );
+    const cle = cleSession_(jeton);
+    if (props.getProperty(cle)) {
+      throw new Error("Collision de sessions.");
+    }
     const expireA = maintenant + DUREE_SESSION_MS;
-    props.setProperty(cleSession_(jeton), JSON.stringify({ expireA, marqueCode }));
+    props.setProperty(cle, JSON.stringify({ expireA, marqueCode }));
     return { succes: true, jeton, expireA };
   });
 }
@@ -774,11 +780,27 @@ function revoquerSession_(jeton) {
   avecVerrouSessions_(props => props.deleteProperty(cle));
 }
 
+function effacerSessions_(props) {
+  for (const cle of props.getKeys()) {
+    if (cle.startsWith(PREFIXE_SESSION)) props.deleteProperty(cle);
+  }
+}
+
 // À exécuter depuis l’éditeur Apps Script avec le compte qui administre le projet.
 function revoquerToutesLesSessions() {
+  avecVerrouSessions_(effacerSessions_);
+}
+
+// Ajouter NOUVEAU_CODE_ACCES dans les propriétés avant d’exécuter cette fonction.
+function changerCodeFamilial() {
   avecVerrouSessions_(props => {
-    for (const cle of props.getKeys()) {
-      if (cle.startsWith(PREFIXE_SESSION)) props.deleteProperty(cle);
+    const nouveauCode = props.getProperty("NOUVEAU_CODE_ACCES");
+    if (!nouveauCode || !nouveauCode.trim() || nouveauCode === props.getProperty("CODE_ACCES")) {
+      throw new Error("Nouveau code familial manquant ou identique.");
     }
+    effacerSessions_(props);
+    props.setProperty("CODE_ACCES", nouveauCode);
+    props.deleteProperty("NOUVEAU_CODE_ACCES");
+    props.deleteProperty("CONNEXION_ECHECS");
   });
 }
