@@ -259,7 +259,15 @@ async function envoyerPhotosCours() {
     zone.textContent = "Sélectionne d'abord des photos.";
     return;
   }
-
+ // Vérifier la taille de chaque photo
+  for (const fichier of fichiers) {
+    if (fichier.size > 10 * 1024 * 1024) {
+      zone.textContent =
+        "Photo trop volumineuse : " + fichier.name +
+        ". Taille maximale : 10 Mo.";
+      return;
+    }
+  }
   zone.textContent = "Préparation de l'envoi...";
 }
 function convertirPhotoBase64(fichier) {
