@@ -1,57 +1,24 @@
 const MODELE = "gemini-3.5-flash-lite";
 
-function genererQuestionnaire_() {
-  const props = PropertiesService.getScriptProperties();
-  const cle = props.getProperty("GEMINI_API_KEY");
-  const idCours = props.getProperty("DOSSIER_COURS");
-  const idQuiz = props.getProperty("DOSSIER_QUIZ");
-  const idTraites = props.getProperty("DOSSIER_TRAITES");
-   if (!cle || !idCours || !idQuiz || !idTraites) {
-    throw new Error("Paramètres du projet manquants.");
-  }
+function genererQuestionnaire_(photos) {
+  const cle = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
+  if (!cle) throw erreurLot_("GEMINI_NON_CONFIGURE");
 
-  const dossierCours = DriveApp.getFolderById(idCours);
-  const dossierQuiz = DriveApp.getFolderById(idQuiz);
-  const dossierTraites = DriveApp.getFolderById(idTraites);
-  const fichiers = dossierCours.getFiles();
-  const photos = [];
-
-  while (fichiers.hasNext()) {
-    const fichier = fichiers.next();
-    if (["image/jpeg", "image/png", "image/webp"]
-        .includes(fichier.getMimeType())) {
-      photos.push(fichier);
-    }
-  }
-
-  if (photos.length === 0) {
-    throw new Error("Aucune photo trouvée.");
-  }
-
-// Préparer toutes les photos du cours.
-const partiesImages = [];
-
-for (const photo of photos) {
-  const blob = photo.getBlob();
-
-  if (blob.getBytes().length > 15 * 1024 * 1024) {
-    throw new Error("Photo trop volumineuse : " + photo.getName());
-  }
-
-  partiesImages.push({
-    inline_data: {
-      mime_type: blob.getContentType(),
-      data: Utilities.base64Encode(blob.getBytes())
-    }
+  const partiesImages = photos.map(photo => {
+    const blob = photo.getBlob();
+    return {
+      inline_data: {
+        mime_type: blob.getContentType(),
+        data: Utilities.base64Encode(blob.getBytes())
+      }
+    };
   });
-
-  Logger.log("Photo préparée : " + photo.getName());
-}
 
   const consigne = `
 Tu es un professeur de collège français.
 
-Lis attentivement cette photographie d'un cours.
+Lis attentivement toutes les photos, dans l’ordre transmis.
+Elles appartiennent au même cours. Utilise le contenu de l’ensemble des pages.
 
 Crée un questionnaire de révision interactif
 pour un élève de 5e.
@@ -217,46 +184,11 @@ const requete = {
   const quiz = JSON.parse(texte);
   verifierQuiz_(quiz);
 
-  // Identifiant aléatoire du questionnaire.
-  quiz.id = Utilities.getUuid();
-
-  const nom = "Quiz_" + quiz.id + ".json";
-
-  dossierQuiz.createFile(
-    nom,
-    JSON.stringify(quiz, null, 2),
-    "application/json"
-  );
-// Créer un sous-dossier pour conserver les photos du cours.
-const nomDossier = quiz.titre
-  .replace(/[\\/:*?"<>|]/g, "-")
-  .substring(0, 80);
-
-const dossierArchive = dossierTraites.createFolder(nomDossier);
-
-// Déplacer toutes les photos dans ce sous-dossier.
-for (const photo of photos) {
-  photo.moveTo(dossierArchive);
-  Logger.log("Photo archivée : " + photo.getName());
-}
-
-Logger.log("Cours archivé dans : " + nomDossier);
-  Logger.log("QUESTIONNAIRE CRÉÉ !");
-  Logger.log("Titre : " + quiz.titre);
-  Logger.log("Questions : " + quiz.questions.length);
-  Logger.log("Identifiant : " + quiz.id);
-
-  const adresse = ScriptApp.getService().getUrl();
-
-  if (adresse) {
-    Logger.log("Lien : " + adresse + "?id=" + quiz.id);
-  } else {
-    Logger.log("Le lien sera disponible après déploiement.");
-  }
+  return quiz;
 }
 
 function verifierQuiz_(quiz) {
-  if (!quiz || typeof quiz.titre !== "string" ||
+  if (!quiz || typeof quiz.titre !== "string" || !quiz.titre.trim() ||
       !Array.isArray(quiz.questions) ||
       quiz.questions.length === 0) {
     throw new Error("Questionnaire incomplet.");
@@ -338,7 +270,7 @@ function chargerQuiz_(id) {
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile("Index")
-    .setTitle("Révis’Facile — Test de connexion")
+    .setTitle("Révis’Facile — Test multiphoto")
     .addMetaTag("viewport", "width=device-width, initial-scale=1");
 }
 
@@ -361,7 +293,7 @@ function traiterPostTest_(e) {
     }
 
     const actionsProtegees = [
-      "chargerQuiz", "verifierReponse", "listerQuiz", "genererQuiz", "ajouterPhoto"
+      "chargerQuiz", "verifierReponse", "listerQuiz", "preparerLot", "genererQuiz", "ajouterPhoto"
     ];
     if (!actionsProtegees.includes(donnees.action)) {
       return reponseJson_(reponse);
@@ -383,26 +315,16 @@ if (donnees.action === "listerQuiz") {
   reponse.succes = true;
   reponse.message = "Liste des questionnaires récupérée.";
 }
-if (donnees.action === "ajouterPhoto") {
-  reponse.nomFichier = enregistrerPhoto_(donnees);
-  reponse.succes = true;
-  reponse.message = "Photo enregistrée.";
-}
-if (donnees.action === "genererQuiz") {
-  const verrouGeneration = LockService.getScriptLock();
-
-  if (!verrouGeneration.tryLock(1000)) {
-    throw new Error("Une génération est déjà en cours.");
-  }
-
-  try {
-    genererQuestionnaire_();
-    reponse.succes = true;
-    reponse.message = "Questionnaire créé avec succès.";
-  } finally {
-    verrouGeneration.releaseLock();
-  }
-}
+    if (donnees.action === "preparerLot") {
+      return reponseJson_({ succes: true, ...preparerLot_(donnees) });
+    }
+    if (donnees.action === "ajouterPhoto") {
+      enregistrerPhoto_(donnees);
+      return reponseJson_({ succes: true });
+    }
+    if (donnees.action === "genererQuiz") {
+      return reponseJson_({ succes: true, quiz: genererLot_(donnees) });
+    }
     if (donnees.action === "verifierReponse") {
       const quiz = chargerQuiz_(donnees.id);
 
@@ -475,6 +397,7 @@ if (donnees.action === "genererQuiz") {
     }
 
   } catch (erreur) {
+    if (erreur.codeLot) return reponseJson_({ succes: false, erreur: erreur.codeLot });
     console.error(erreur);
     reponse.message = "Demande refusée.";
   }
@@ -485,49 +408,6 @@ if (donnees.action === "genererQuiz") {
 function reponseJson_(donnees) {
   return ContentService.createTextOutput(JSON.stringify(donnees))
     .setMimeType(ContentService.MimeType.JSON);
-}
-
-function enregistrerPhoto_(donnees) {
-  const idDossier = PropertiesService
-    .getScriptProperties()
-    .getProperty("DOSSIER_COURS");
-
-  if (!idDossier) {
-    throw new Error("Dossier des cours non configuré.");
-  }
-
-  const typesAutorises = [
-    "image/jpeg",
-    "image/png",
-    "image/webp"
-  ];
-
-  if (!typesAutorises.includes(donnees.typeFichier)) {
-    throw new Error("Format d'image non autorisé.");
-  }
-
-  if (
-    typeof donnees.contenuBase64 !== "string" ||
-    donnees.contenuBase64.length > 20 * 1024 * 1024
-  ) {
-    throw new Error("Image absente ou trop volumineuse.");
-  }
-
-  const octets = Utilities.base64Decode(donnees.contenuBase64);
-
-  const nom = "Cours_" + Utilities.getUuid() +
-    (donnees.typeFichier === "image/png" ? ".png" :
-     donnees.typeFichier === "image/webp" ? ".webp" : ".jpg");
-
-  const blob = Utilities.newBlob(
-    octets,
-    donnees.typeFichier,
-    nom
-  );
-
-  DriveApp.getFolderById(idDossier).createFile(blob);
-
-  return nom;
 }
 
 function verifierReponseAvecGemini_(question, reponse, reponsesAcceptees) {
@@ -781,9 +661,183 @@ function changerCodeFamilial_() {
   });
 }
 
-// Interface publique du kit. Les actions Drive en écriture et Gemini sont exclues.
+const MAX_PHOTOS_LOT = 8;
+const MAX_OCTETS_PHOTO = 1536 * 1024;
+const DUREE_VERROU_LOT_MS = 10 * 60 * 1000;
+
+function erreurLot_(code) {
+  return Object.assign(new Error(code), { codeLot: code });
+}
+
+function cleLot_(id) {
+  if (typeof id !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id)) {
+    throw erreurLot_("LOT_INVALIDE");
+  }
+  return "LOT_" + id;
+}
+
+function lireLot_(props, donnees) {
+  const cle = cleLot_(donnees.lotId);
+  const lot = JSON.parse(props.getProperty(cle) || "null");
+  const proprietaire = cleSession_(donnees.jeton);
+  if (lot && lot.proprietaire !== proprietaire) throw erreurLot_("LOT_INVALIDE");
+  return { cle, lot, proprietaire };
+}
+
+function dossierLotConfigure_(props, cle) {
+  const id = props.getProperty(cle);
+  if (!id) throw erreurLot_("DRIVE_NON_CONFIGURE");
+  return DriveApp.getFolderById(id);
+}
+
+function photoLot_(dossier, index) {
+  return fichierActif_(dossier, "Photo_" + (index + 1) + ".jpg");
+}
+
+function fichierActif_(dossier, nom) {
+  const fichiers = dossier.getFilesByName(nom);
+  while (fichiers.hasNext()) {
+    const fichier = fichiers.next();
+    if (!fichier.isTrashed()) return fichier;
+  }
+  return null;
+}
+
+function preparerLot_(donnees) {
+  if (!Number.isInteger(donnees.nombre) || donnees.nombre < 1 || donnees.nombre > MAX_PHOTOS_LOT) {
+    throw erreurLot_("NOMBRE_PHOTOS");
+  }
+  return avecVerrouSessions_(props => {
+    const { cle, lot, proprietaire } = lireLot_(props, donnees);
+    if (lot && lot.nombre !== donnees.nombre) throw erreurLot_("LOT_INVALIDE");
+    const entree = dossierLotConfigure_(props, "DOSSIER_COURS");
+    let dossier;
+    if (lot) {
+      dossier = DriveApp.getFolderById(lot.dossierId);
+    } else {
+      const nom = "Lot_" + donnees.lotId;
+      const dossiers = entree.getFoldersByName(nom);
+      dossier = dossiers.hasNext() ? dossiers.next() : entree.createFolder(nom);
+      props.setProperty(cle, JSON.stringify({
+        proprietaire, dossierId: dossier.getId(), nombre: donnees.nombre
+      }));
+    }
+    const recues = [];
+    for (let index = 0; index < donnees.nombre; index++) {
+      if (photoLot_(dossier, index)) recues.push(index);
+    }
+    return { recues };
+  });
+}
+
+function enregistrerPhoto_(donnees) {
+  const contenu = donnees.contenuBase64;
+  if (typeof contenu !== "string" || !contenu || contenu.length > 4 * Math.ceil(MAX_OCTETS_PHOTO / 3)) {
+    throw erreurLot_("PHOTO_TROP_GRANDE");
+  }
+  let octets;
+  try {
+    octets = Utilities.base64Decode(contenu);
+  } catch {
+    throw erreurLot_("PHOTO_INVALIDE");
+  }
+  if (octets.length > MAX_OCTETS_PHOTO) throw erreurLot_("PHOTO_TROP_GRANDE");
+  if (octets.length < 4 || (octets[0] & 255) !== 255 ||
+      (octets[1] & 255) !== 216 || (octets[2] & 255) !== 255) {
+    throw erreurLot_("PHOTO_INVALIDE");
+  }
+  avecVerrouSessions_(props => {
+    const { lot } = lireLot_(props, donnees);
+    const index = donnees.indexPhoto;
+    if (!lot || !Number.isInteger(index) || index < 0 || index >= lot.nombre) {
+      throw erreurLot_("LOT_INVALIDE");
+    }
+    const dossier = DriveApp.getFolderById(lot.dossierId);
+    const existante = photoLot_(dossier, index);
+    if (existante) {
+      const empreinte = octetsPhoto => Utilities.base64Encode(
+        Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, octetsPhoto)
+      );
+      if (empreinte(existante.getBlob().getBytes()) !== empreinte(octets)) {
+        throw erreurLot_("PHOTOS_DIFFERENTES");
+      }
+      return;
+    }
+    if (lot.enCoursJusqua || lot.termine) throw erreurLot_("LOT_INVALIDE");
+    const nom = "Photo_" + (index + 1) + ".jpg";
+    dossier.createFile(Utilities.newBlob(octets, "image/jpeg", nom));
+  });
+}
+
+function genererLot_(donnees) {
+  const props = PropertiesService.getScriptProperties();
+  const dossierQuiz = dossierLotConfigure_(props, "DOSSIER_QUIZ");
+  const archives = dossierLotConfigure_(props, "DOSSIER_TRAITES");
+  const nomFinal = "Quiz_" + donnees.lotId + ".json";
+  const nomTemporaire = "Quiz_" + donnees.lotId + ".en-cours";
+
+  const travail = avecVerrouSessions_(() => {
+    const { cle, lot } = lireLot_(props, donnees);
+    if (!lot) throw erreurLot_("LOT_INVALIDE");
+    if (lot.termine) return { resultat: lot.termine };
+    const termine = fichierActif_(dossierQuiz, nomFinal);
+    if (termine) {
+      const quiz = JSON.parse(termine.getBlob().getDataAsString("UTF-8"));
+      return { resultat: { id: quiz.id, titre: quiz.titre } };
+    }
+    if (lot.enCoursJusqua > Date.now()) throw erreurLot_("GENERATION_EN_COURS");
+    const dossier = DriveApp.getFolderById(lot.dossierId);
+    const photos = Array.from({ length: lot.nombre }, (_, index) => photoLot_(dossier, index));
+    if (photos.some(photo => !photo)) throw erreurLot_("LOT_INCOMPLET");
+    lot.enCoursJusqua = Date.now() + DUREE_VERROU_LOT_MS;
+    props.setProperty(cle, JSON.stringify(lot));
+    return { cle, lot, dossier, photos };
+  });
+
+  if (travail.resultat) return travail.resultat;
+
+  try {
+    let fichier = fichierActif_(dossierQuiz, nomTemporaire);
+    let quiz;
+    if (fichier) {
+      quiz = JSON.parse(fichier.getBlob().getDataAsString("UTF-8"));
+    } else {
+      try {
+        quiz = genererQuestionnaire_(travail.photos);
+      } catch (erreur) {
+        if (erreur.codeLot) throw erreur;
+        console.error(erreur);
+        throw erreurLot_("GEMINI_INDISPONIBLE");
+      }
+      quiz.id = donnees.lotId;
+      fichier = dossierQuiz.createFile(nomTemporaire, JSON.stringify(quiz), "application/json");
+    }
+    try {
+      const titreDossier = quiz.titre.trim().replace(/[\\/:*?"<>|]/g, "-").slice(0, 80);
+      travail.dossier.setName(titreDossier);
+      const parents = travail.dossier.getParents();
+      if (!parents.hasNext() || parents.next().getId() !== archives.getId()) {
+        travail.dossier.moveTo(archives);
+      }
+      fichier.setName(nomFinal);
+    } catch (erreur) {
+      console.error(erreur);
+      throw erreurLot_("ARCHIVAGE_INTERROMPU");
+    }
+    travail.lot.termine = { id: quiz.id, titre: quiz.titre };
+    return travail.lot.termine;
+  } finally {
+    avecVerrouSessions_(() => {
+      delete travail.lot.enCoursJusqua;
+      props.setProperty(travail.cle, JSON.stringify(travail.lot));
+    });
+  }
+}
+
+// Interface publique du kit isolé, avec la même authentification que le serveur.
 function appelerTest(action, parametres) {
-  if (!["connexion", "deconnexion", "listerQuiz", "chargerQuiz"].includes(action)) {
+  if (!["connexion", "deconnexion", "listerQuiz", "chargerQuiz",
+        "preparerLot", "ajouterPhoto", "genererQuiz", "verifierReponse"].includes(action)) {
     return { succes: false };
   }
   return JSON.parse(traiterPostTest_({
@@ -798,11 +852,11 @@ function installerTest() {
   }
   avecVerrouSessions_(props => {
     configurationSessions_(props);
-    if (["DOSSIER_COURS", "DOSSIER_QUIZ", "DOSSIER_TRAITES", "GEMINI_API_KEY"]
+    if (["DOSSIER_COURS", "DOSSIER_QUIZ", "DOSSIER_TRAITES"]
       .some(cle => props.getProperty(cle))) {
-      throw new Error("Ce projet contient déjà une configuration Drive ou Gemini.");
+      throw new Error("Ce projet contient déjà une configuration Drive.");
     }
-    const dossier = DriveApp.createFolder("Révis’Facile — Test de connexion");
+    const dossier = DriveApp.createFolder("Révis’Facile — Test multiphoto");
     const cours = dossier.createFolder("Photos");
     const quiz = dossier.createFolder("Questionnaires fictifs");
     const traites = dossier.createFolder("Archives");

@@ -45,7 +45,7 @@
   </style>
 </head>
 <body>
-  <h1>Révis'Facile · Test de connexion</h1>
+  <h1>Révis'Facile · Test multiphoto</h1>
 
 <section class="carte" id="connexion" aria-labelledby="titreConnexion">
   <h2 id="titreConnexion">Connexion familiale</h2>
@@ -73,8 +73,25 @@
   <p id="messageQuiz"></p>
 </div>
 
-<input id="photosCours" type="file" hidden>
-<p id="nombrePhotos" hidden></p>
+<div class="carte">
+  <h2>📸 Ajouter un cours</h2>
+  <input
+    type="file"
+    id="photosCours"
+    accept="image/jpeg,image/png,image/webp"
+    multiple
+    style="display:none"
+  >
+
+  <button type="button" id="ajouterFichiers">
+    📷 Ajouter des fichiers
+  </button>
+  <p>Jusqu’à 8 photos JPEG, PNG ou WebP, dans l’ordre des pages.</p>
+  <p id="nombrePhotos">Aucune photo sélectionnée.</p>
+  <button type="button" id="genererQuestionnaire" disabled>Générer le questionnaire</button>
+  <button type="button" id="nouveauLot" hidden>Commencer un autre cours</button>
+  <p id="progressionLot" role="status"></p>
+</div>
 
 <script>
 const CLE_SESSION = "revisFacileTestConnexion:" + location.pathname;
@@ -112,8 +129,7 @@ function terminerSession(message = "", effacerStockage = true) {
   }
   document.getElementById("messageQuiz").textContent = "";
   document.getElementById("messageSession").textContent = "";
-  document.getElementById("photosCours").value = "";
-  document.getElementById("nombrePhotos").textContent = "Aucune photo sélectionnée.";
+  reinitialiserPhotos();
   window.quizEnCours = null;
   window.idSessionQuiz = null;
   document.getElementById("connexion").hidden = false;
@@ -135,6 +151,8 @@ function ouvrirSession(valeur) {
   document.getElementById("connexion").hidden = true;
   document.getElementById("espaceRevision").hidden = false;
   surveillerExpiration();
+  if (!session) return;
+  restaurerLot();
   return afficherListeQuiz();
 }
 
@@ -190,6 +208,23 @@ async function afficherListeQuiz() {
     console.error(erreur);
     zone.textContent = "Erreur de connexion.";
   }
+}
+function convertirPhotoBase64(fichier) {
+  return new Promise((resolve, reject) => {
+    const lecteur = new FileReader();
+
+    lecteur.onload = () => {
+      const resultat = lecteur.result;
+      const contenuBase64 = resultat.split(",")[1];
+      resolve(contenuBase64);
+    };
+
+    lecteur.onerror = () => {
+      reject(new Error("Impossible de lire la photo."));
+    };
+
+    lecteur.readAsDataURL(fichier);
+  });
 }
 async function ouvrirQuestionnaire(id) {
   const message = document.getElementById("messageQuiz");
@@ -429,6 +464,201 @@ champ.disabled = true;
 </script>
 
 </main>
+
+<script>
+const MAX_PHOTOS_LOT = 8;
+const MAX_OCTETS_PHOTO = 1536 * 1024;
+const LIMITE_ORIGINAL = 30 * 1024 * 1024;
+const champPhotos = document.getElementById("photosCours");
+const boutonFichiers = document.getElementById("ajouterFichiers");
+const boutonGeneration = document.getElementById("genererQuestionnaire");
+const boutonNouveauLot = document.getElementById("nouveauLot");
+const nombrePhotos = document.getElementById("nombrePhotos");
+const progressionLot = document.getElementById("progressionLot");
+let lotEnCours = null;
+let traitementLot = false;
+
+function cleLotNavigateur() {
+  return CLE_SESSION + ":lot";
+}
+
+function enregistrerLotLocal(lot, idTermine) {
+  try {
+    if (lot) localStorage.setItem(cleLotNavigateur(), JSON.stringify(lot));
+    else {
+      const stocke = JSON.parse(localStorage.getItem(cleLotNavigateur()));
+      if (stocke?.id === idTermine) localStorage.removeItem(cleLotNavigateur());
+    }
+  } catch {
+    // Un navigateur qui interdit le stockage conserve le lot dans cet onglet.
+  }
+}
+
+function actualiserCommandesLot() {
+  const nombre = champPhotos.files.length;
+  boutonFichiers.disabled = traitementLot;
+  boutonGeneration.disabled = traitementLot || (!nombre && !lotEnCours);
+  boutonNouveauLot.hidden = !lotEnCours;
+  boutonNouveauLot.disabled = traitementLot;
+  nombrePhotos.textContent = nombre
+    ? nombre + (nombre === 1 ? " photo sélectionnée." : " photos sélectionnées.")
+    : "Aucune photo sélectionnée.";
+}
+
+function reinitialiserPhotos() {
+  lotEnCours = null;
+  champPhotos.value = "";
+  progressionLot.textContent = "";
+  actualiserCommandesLot();
+}
+
+function restaurerLot() {
+  try {
+    const memorise = JSON.parse(localStorage.getItem(cleLotNavigateur()));
+    if (memorise && memorise.expireA === session.expireA &&
+        typeof memorise.id === "string" && Array.isArray(memorise.empreintes) &&
+        memorise.empreintes.length >= 1 && memorise.empreintes.length <= MAX_PHOTOS_LOT) {
+      lotEnCours = memorise;
+      progressionLot.textContent =
+        "Un cours est en attente. Appuie sur Générer le questionnaire pour le reprendre.";
+    }
+  } catch {
+    // Le stockage n'est pas toujours disponible.
+  }
+  actualiserCommandesLot();
+}
+
+async function empreintePhoto(fichier) {
+  const octets = new Uint8Array(await crypto.subtle.digest("SHA-256", await fichier.arrayBuffer()));
+  return Array.from(octets, octet => octet.toString(16).padStart(2, "0")).join("");
+}
+
+async function preparerImage(fichier) {
+  const url = URL.createObjectURL(fichier);
+  const image = new Image();
+  const canvas = document.createElement("canvas");
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error("Impossible de lire « " + fichier.name + " »."));
+      image.src = url;
+    });
+    if (!image.naturalWidth || !image.naturalHeight) {
+      throw new Error("Impossible de lire « " + fichier.name + " ».");
+    }
+    for (const [dimension, qualite] of [[2400, 0.86], [2000, 0.8], [1600, 0.75], [1200, 0.7]]) {
+      const echelle = Math.min(1, dimension / Math.max(image.naturalWidth, image.naturalHeight));
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * echelle));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * echelle));
+      const dessin = canvas.getContext("2d");
+      dessin.fillStyle = "white";
+      dessin.fillRect(0, 0, canvas.width, canvas.height);
+      dessin.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const jpeg = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", qualite));
+      if (jpeg && jpeg.size <= MAX_OCTETS_PHOTO) return jpeg;
+    }
+    throw new Error("Impossible de réduire « " + fichier.name + " ». Essaie une autre photo.");
+  } finally {
+    URL.revokeObjectURL(url);
+    canvas.width = canvas.height = 0;
+  }
+}
+
+const MESSAGES_LOT = {
+  NOMBRE_PHOTOS: "Choisis entre 1 et 8 photos.",
+  LOT_INVALIDE: "Ce cours ne peut plus être repris. Commence un autre cours.",
+  LOT_INCOMPLET: "Il manque des photos. Sélectionne à nouveau les mêmes fichiers dans le même ordre.",
+  PHOTO_INVALIDE: "Une photo n’a pas pu être lue. Choisis une image JPEG, PNG ou WebP.",
+  PHOTO_TROP_GRANDE: "Une photo est encore trop volumineuse après réduction.",
+  PHOTOS_DIFFERENTES: "Les photos ne correspondent pas à ce cours. Sélectionne les mêmes fichiers dans le même ordre.",
+  GENERATION_EN_COURS: "La génération est peut-être encore en cours. Attends quelques minutes avant de réessayer.",
+  GEMINI_NON_CONFIGURE: "La génération n’est pas encore configurée.",
+  GEMINI_INDISPONIBLE: "Gemini n’a pas pu créer le questionnaire. Réessaie dans un instant.",
+  DRIVE_NON_CONFIGURE: "Les dossiers de l’application ne sont pas configurés.",
+  ARCHIVAGE_INTERROMPU: "Le questionnaire est prêt. Réessaie pour terminer l’archivage des photos."
+};
+
+async function appelerLot(action, parametres) {
+  const reponse = await appelerActionProtegee(action, parametres);
+  if (reponse && !reponse.succes) {
+    throw new Error(MESSAGES_LOT[reponse.erreur] || "L’opération a été interrompue. Réessaie.");
+  }
+  return reponse;
+}
+
+async function genererDepuisPhotos() {
+  if (traitementLot || !session) return;
+  const sessionEnvoi = session;
+  const fichiers = Array.from(champPhotos.files);
+  if (!fichiers.length && !lotEnCours) return;
+  traitementLot = true;
+  actualiserCommandesLot();
+
+  try {
+    if (fichiers.length > MAX_PHOTOS_LOT) throw new Error(MESSAGES_LOT.NOMBRE_PHOTOS);
+    if (fichiers.some(fichier => !["image/jpeg", "image/png", "image/webp"].includes(fichier.type))) {
+      throw new Error(MESSAGES_LOT.PHOTO_INVALIDE);
+    }
+    if (fichiers.some(fichier => !fichier.size || fichier.size > LIMITE_ORIGINAL)) {
+      throw new Error("Chaque fichier d’origine doit faire au maximum 30 Mo.");
+    }
+    if (!lotEnCours || fichiers.length) {
+      progressionLot.textContent = "Préparation des photos…";
+      const empreintes = [];
+      for (const fichier of fichiers) {
+        empreintes.push(await empreintePhoto(fichier));
+        if (session !== sessionEnvoi) return;
+      }
+      if (!lotEnCours) {
+        lotEnCours = { id: crypto.randomUUID(), empreintes, expireA: sessionEnvoi.expireA };
+        enregistrerLotLocal(lotEnCours);
+      } else if (JSON.stringify(empreintes) !== JSON.stringify(lotEnCours.empreintes)) {
+        throw new Error(MESSAGES_LOT.PHOTOS_DIFFERENTES);
+      }
+    }
+
+    const { id: lotId, empreintes } = lotEnCours;
+    const nombre = empreintes.length;
+    const lot = await appelerLot("preparerLot", { lotId, nombre });
+    if (!lot) return;
+    const recues = new Set(lot.recues);
+    if (recues.size < nombre && !fichiers.length) throw new Error(MESSAGES_LOT.LOT_INCOMPLET);
+    for (let indexPhoto = 0; indexPhoto < nombre; indexPhoto++) {
+      if (recues.has(indexPhoto)) continue;
+      progressionLot.textContent = "Envoi de la photo " + (indexPhoto + 1) + " sur " + nombre + "…";
+      const jpeg = await preparerImage(fichiers[indexPhoto]);
+      const contenuBase64 = await convertirPhotoBase64(jpeg);
+      if (session !== sessionEnvoi) return;
+      if (!await appelerLot("ajouterPhoto", { lotId, indexPhoto, contenuBase64 })) return;
+    }
+
+    progressionLot.textContent = "Création du questionnaire et archivage des photos…";
+    const resultat = await appelerLot("genererQuiz", { lotId });
+    if (!resultat) return;
+    enregistrerLotLocal(null, lotId);
+    reinitialiserPhotos();
+    progressionLot.textContent = "Questionnaire créé : " + resultat.quiz.titre;
+    await afficherListeQuiz();
+  } catch (erreur) {
+    if (session === sessionEnvoi) {
+      progressionLot.textContent = erreur instanceof TypeError
+        ? "La connexion a été interrompue. Appuie de nouveau sur Générer le questionnaire."
+        : erreur.message;
+    }
+  } finally {
+    traitementLot = false;
+    actualiserCommandesLot();
+  }
+}
+
+boutonFichiers.addEventListener("click", () => champPhotos.click());
+champPhotos.addEventListener("change", actualiserCommandesLot);
+boutonGeneration.addEventListener("click", genererDepuisPhotos);
+boutonNouveauLot.addEventListener("click", () => {
+  enregistrerLotLocal(null, lotEnCours?.id);
+  reinitialiserPhotos();
+});
+</script>
 
 <script>
 const champCode = document.getElementById("codeFamilial");
