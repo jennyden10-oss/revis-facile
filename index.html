@@ -1,8 +1,23 @@
 
 <!DOCTYPE html>
 <html lang="fr">
-<head>
+<head><input id="identifiantQuiz" type="hidden">
+<div>
+  <input
+    type="file"
+    id="photosCours"
+    accept="image/jpeg,image/png,image/webp"
+    multiple
+    style="display:none"
+  >
 
+  <button type="button"
+    onclick="document.getElementById('photosCours').click()">
+    📷 Ajouter des fichiers
+  </button>
+
+  <p id="nombrePhotos">Aucune photo sélectionnée.</p>
+</div>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#4169e1">
 <meta name="apple-mobile-web-app-capable" content="yes">
