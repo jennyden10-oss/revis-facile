@@ -1,8 +1,56 @@
-
 <!DOCTYPE html>
 <html lang="fr">
-<head><input id="identifiantQuiz" type="hidden">
-<div>
+<head>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#4169e1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+  <title>Révis'Facile</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f2f5ff;
+      text-align: center;
+      padding: 40px 20px;
+    }
+    h1 { color: #4455aa; }
+    .carte {
+      background: white;
+      border-radius: 16px;
+      padding: 30px;
+      max-width: 450px;
+      margin: 30px auto;
+      box-shadow: 0 3px 12px #ddd;
+    }
+  </style>
+</head>
+<body>
+  <h1>Révis'Facile 📚</h1>
+
+<div class="carte">
+  <h2>📚 Ouvrir un questionnaire</h2>
+
+  <input
+    id="codeFamilial"
+    type="password"
+    placeholder="Code d'accès familial"
+    autocomplete="off"
+    style="width:95%;padding:10px;margin:6px 0"
+  >
+  <button type="button" onclick="afficherListeQuiz()">
+    📚 Mes questionnaires
+  </button>
+
+  <div id="listeQuiz" aria-live="polite"></div>
+  <p id="messageQuiz"></p>
+</div>
+
+<div class="carte">
+  <h2>📸 Ajouter un cours</h2>
   <input
     type="file"
     id="photosCours"
@@ -33,165 +81,12 @@ document.getElementById("photosCours").addEventListener("change", function () {
         : nombre + " photos sélectionnées.";
 });
 </script>
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#4169e1">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-
-  <meta charset="UTF-8">
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1">
-  <title>Révis'Facile</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f2f5ff;
-      text-align: center;
-      padding: 40px 20px;
-    }
-    h1 { color: #4455aa; }
-    .carte {
-      background: white;
-      border-radius: 16px;
-      padding: 30px;
-      max-width: 450px;
-      margin: 30px auto;
-      box-shadow: 0 3px 12px #ddd;
-    }
-  </style>
-</head>
-  
-<button onclick="testerConnexion()">
-  Tester la connexion
-</button>
-
-<p id="resultat"></p>
 
 <script>
-async function testerConnexion() {
-  const resultat = document.getElementById("resultat");
-  resultat.textContent = "Test en cours...";
+const ADRESSE_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquFVRKy9MLtQLQn8uy1y8dRPLIUdqT0wWaV0ul_H-i8Kaiwcw/exec";
 
-  const adresse = prompt(
-    "Colle l'adresse Apps Script terminée par ?test=connexion"
-  );
-
-  if (!adresse) {
-    resultat.textContent = "Test annulé.";
-    return;
-  }
-
-  try {
-    const reponse = await fetch(adresse, {
-      method: "GET",
-      redirect: "follow"
-    });
-
-    const donnees = await reponse.json();
-    resultat.textContent =
-      "Connexion réussie : " + donnees.connexion;
-  } catch (erreur) {
-    resultat.textContent =
-      "Connexion impossible depuis cette page.";
-    console.error(erreur);
-  }
-}
-</script>
-<body>
-  
-<div style="margin: 20px 0; padding: 15px;">
-  <h2>📸 Ajouter un cours</h2>
-  <p>Prends une photo de ta leçon pour préparer tes révisions.</p>
-
-<input
-  type="file"
-  id="photoCours"
-  accept="image/*"
->
-</div>
-
-  <div class="carte">
-    <h1>Révis'Facile 📚</h1>
-    <h2>Bienvenue !</h2>
-    <p>Ton application de révision est prête.</p>
-    <p>Tu pourras bientôt photographier tes cours
-       et t'entraîner avec des quiz.</p>
-  </div>
-  
-<button onclick="testerPost()">
-  Tester l'envoi POST
-</button>
-
-<p id="resultatPost"></p>
-
-<script>
-async function testerPost() {
-  const resultat = document.getElementById("resultatPost");
-
-  const adresse = prompt(
-    "Colle l'adresse Apps Script terminée par /exec"
-  );
-
-  if (!adresse) return;
-
-  resultat.textContent = "Test en cours...";
-
-  try {
-    const reponse = await fetch(
-      adresse + "?test=connexion",
-      {
-        method: "POST",
-        body: "test",
-        redirect: "follow"
-      }
-    );
-
-    const donnees = await reponse.json();
-
-   resultat.textContent =
-  "Réponse reçue : " + JSON.stringify(donnees);
-
-  } catch (erreur) {
-    resultat.textContent =
-      "Connexion POST impossible.";
-    console.error(erreur);
-  }
-}
-</script>
-
-<div class="carte">
-  <h2>📚 Ouvrir un questionnaire</h2>
-
-  
-
-  <input
-  id="identifiantQuiz"
-  type="hidden"
->
- <input
-    id="codeFamilial"
-    type="password"
-    placeholder="Code d'accès familial"
-    autocomplete="off"
-    style="width:95%;padding:10px;margin:6px 0"
-  >
-<button type="button" onclick="afficherListeQuiz()">
-  📚 Mes questionnaires
-</button>
-
-<div id="listeQuiz" aria-live="polite"></div>
-
- 
-
-  
-  <p id="messageQuiz"></p>
-</div>
-
-<script>
-  
 async function afficherListeQuiz() {
   const zone = document.getElementById("listeQuiz");
-  const adresse = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquFVRKy9MLtQLQn8uy1y8dRPLIUdqT0wWaV0ul_H-i8Kaiwcw/exec";
   const code = document.getElementById("codeFamilial").value;
 
   if (!code) {
@@ -202,7 +97,7 @@ async function afficherListeQuiz() {
   zone.textContent = "Recherche des questionnaires...";
 
   try {
-    const reponse = await fetch(adresse, {
+    const reponse = await fetch(ADRESSE_APPS_SCRIPT, {
       method: "POST",
       body: JSON.stringify({
         action: "listerQuiz",
@@ -235,10 +130,7 @@ async function afficherListeQuiz() {
       bouton.style.padding = "12px";
       bouton.style.width = "100%";
 
-      bouton.onclick = () => {
-        document.getElementById("identifiantQuiz").value = quiz.id;
-        ouvrirQuestionnaire();
-      };
+      bouton.onclick = () => ouvrirQuestionnaire(quiz.id);
 
       zone.appendChild(bouton);
     });
@@ -277,9 +169,8 @@ async function envoyerPhotosCours() {
     const fichier = fichiers[0];
     const contenuBase64 = await convertirPhotoBase64(fichier);
 
-    const adresse = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquFVRKy9MLtQLQn8uy1y8dRPLIUdqT0wWaV0ul_H-i8Kaiwcw/exec";
 
-    const reponse = await fetch(adresse, {
+    const reponse = await fetch(ADRESSE_APPS_SCRIPT, {
       method: "POST",
       body: JSON.stringify({
         action: "ajouterPhoto",
@@ -320,27 +211,21 @@ function convertirPhotoBase64(fichier) {
     lecteur.readAsDataURL(fichier);
   });
 }
-async function ouvrirQuestionnaire() {
+async function ouvrirQuestionnaire(id) {
   const message = document.getElementById("messageQuiz");
-const adresse = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquFVRKy9MLtQLQn8uy1y8dRPLIUdqT0wWaV0ul_H-i8Kaiwcw/exec";
-  const id = document.getElementById("identifiantQuiz")
-    .value.trim();
   const code = document.getElementById("codeFamilial").value;
 
- 
-if (!adresse || !id || !code) {
-  message.textContent =
-    (!adresse ? "Adresse Apps Script manquante. " : "") +
-    (!id ? "Identifiant du questionnaire manquant. " : "") +
-    (!code ? "Code familial manquant." : "");
-  return;
-}
-
+  if (!id || !code) {
+    message.textContent =
+      (!id ? "Identifiant du questionnaire manquant. " : "") +
+      (!code ? "Code familial manquant." : "");
+    return;
+  }
 
   message.textContent = "Chargement en cours...";
 
   try {
-    const reponse = await fetch(adresse, {
+    const reponse = await fetch(ADRESSE_APPS_SCRIPT, {
       method: "POST",
       body: JSON.stringify({
         action: "chargerQuiz",
@@ -352,22 +237,17 @@ if (!adresse || !id || !code) {
 
     const donnees = await reponse.json();
 
-   if (donnees.succes && donnees.quiz) {
-  message.textContent =
-    "Questionnaire chargé : " + donnees.quiz.titre;
-
-  // Conserver le questionnaire pour l'interface interactive.
-window.quizEnCours = donnees.quiz;
-window.codeSessionQuiz = code;
-window.adresseSessionQuiz = adresse;
-window.idSessionQuiz = id;
-positionQuiz = 0;
-scoreQuiz = 0;
-afficherQuestionQuiz();
-} else {
-  message.textContent =
-    "Accès refusé ou questionnaire introuvable.";
-}
+    if (donnees.succes && donnees.quiz) {
+      message.textContent = "Questionnaire chargé : " + donnees.quiz.titre;
+      window.quizEnCours = donnees.quiz;
+      window.codeSessionQuiz = code;
+      window.idSessionQuiz = id;
+      positionQuiz = 0;
+      scoreQuiz = 0;
+      afficherQuestionQuiz();
+    } else {
+      message.textContent = "Accès refusé ou questionnaire introuvable.";
+    }
   } catch (erreur) {
     message.textContent = "Erreur de connexion.";
     console.error(erreur);
@@ -378,16 +258,23 @@ afficherQuestionQuiz();
 </script>
 
 <div class="carte" id="zoneQuiz" hidden>
-  <h2 id="titreQuiz"></h2>
-  <p id="progressionQuiz"></p>
-  <h3 id="questionQuiz"></h3>
+  <div id="contenuQuiz">
+    <h2 id="titreQuiz"></h2>
+    <p id="progressionQuiz"></p>
+    <h3 id="questionQuiz"></h3>
 
-  <div id="reponsesQuiz"></div>
-  <div id="correctionQuiz" aria-live="polite"></div>
+    <div id="reponsesQuiz"></div>
+    <div id="correctionQuiz" aria-live="polite"></div>
 
-  <button id="boutonQuiz" onclick="actionQuiz()">
-    Vérifier
-  </button>
+    <button id="boutonQuiz" onclick="actionQuiz()">
+      Vérifier
+    </button>
+  </div>
+
+  <div id="resultatQuiz" aria-live="polite" hidden>
+    <h2>🎉 Entraînement terminé !</h2>
+    <p id="scoreFinalQuiz"></p>
+  </div>
 </div>
 
 <script>
@@ -418,6 +305,8 @@ function afficherQuestionQuiz() {
   reponseValidee = false;
 
   document.getElementById("zoneQuiz").hidden = false;
+  document.getElementById("contenuQuiz").hidden = false;
+  document.getElementById("resultatQuiz").hidden = true;
   document.getElementById("titreQuiz").textContent = quiz.titre;
   document.getElementById("progressionQuiz").textContent =
     "Question " + (positionQuiz + 1) +
@@ -470,15 +359,14 @@ function afficherQuestionQuiz() {
 }
 
 async function verifierAvecGeminiQuiz(reponseEleve) {
-  const adresse = window.adresseSessionQuiz;
   const id = window.idSessionQuiz;
   const code = window.codeSessionQuiz;
 
-  if (!adresse || !id || !code) {
+  if (!id || !code) {
     throw new Error("Session de révision indisponible.");
   }
 
-  const resultat = await fetch(adresse, {
+  const resultat = await fetch(ADRESSE_APPS_SCRIPT, {
     method: "POST",
     body: JSON.stringify({
       action: "verifierReponse",
@@ -512,10 +400,10 @@ async function actionQuiz() {
     positionQuiz++;
 
     if (positionQuiz >= quiz.questions.length) {
-      document.getElementById("zoneQuiz").innerHTML =
-        "<h2>🎉 Entraînement terminé !</h2>" +
-        "<h2>" + scoreQuiz + " / " +
-        quiz.questions.length + "</h2>";
+      document.getElementById("scoreFinalQuiz").textContent =
+        scoreQuiz + " / " + quiz.questions.length;
+      document.getElementById("contenuQuiz").hidden = true;
+      document.getElementById("resultatQuiz").hidden = false;
     } else {
       afficherQuestionQuiz();
     }
@@ -607,14 +495,6 @@ champ.disabled = true;
           console.error("Erreur service worker :", erreur);
         });
     });
-  }
-</script>
-
-<script>
-  const adresseMemorisee = localStorage.getItem("revisFacileAdresse");
-
-  if (adresseMemorisee) {
-    document.getElementById("adresseScript").value = adresseMemorisee;
   }
 </script>
 
