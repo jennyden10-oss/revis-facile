@@ -262,6 +262,23 @@ async function envoyerPhotosCours() {
 
   zone.textContent = "Préparation de l'envoi...";
 }
+function convertirPhotoBase64(fichier) {
+  return new Promise((resolve, reject) => {
+    const lecteur = new FileReader();
+
+    lecteur.onload = () => {
+      const resultat = lecteur.result;
+      const contenuBase64 = resultat.split(",")[1];
+      resolve(contenuBase64);
+    };
+
+    lecteur.onerror = () => {
+      reject(new Error("Impossible de lire la photo."));
+    };
+
+    lecteur.readAsDataURL(fichier);
+  });
+}
 async function ouvrirQuestionnaire() {
   const message = document.getElementById("messageQuiz");
 const adresse = "https://script.google.com/macros/s/AKfycbwF8VlaYjCN6Tb1wTRoUquFVRKy9MLtQLQn8uy1y8dRPLIUdqT0wWaV0ul_H-i8Kaiwcw/exec";
